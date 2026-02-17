@@ -15,3 +15,4 @@ coverage/
 *.tgz
 .nyc_output/
 .replit
+github
