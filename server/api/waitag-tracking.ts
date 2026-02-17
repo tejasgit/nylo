@@ -5,7 +5,7 @@
  * Licensed under MIT License (see LICENSE)
  *
  * COMMERCIAL NOTICE: Cross-domain token verification endpoints are part of
- * the WTX-1 protocol covered by LICENSE-COMMERCIAL.
+ * the WTX-1 protocol covered by COMMERCIAL-LICENSE.
  */
 
 import type { Request, Response } from "express";
@@ -165,7 +165,7 @@ export function registerWaiTagTrackingRoutes(app: any, storage: WaiTagStorage) {
 
   /**
    * COMMERCIAL FEATURE: Cross-Domain Token Verification (WTX-1)
-   * See LICENSE-COMMERCIAL for production use requirements.
+   * See COMMERCIAL-LICENSE for production use requirements.
    */
   app.options("/api/tracking/verify-cross-domain-token", (req: Request, res: Response) => {
     const origin = req.headers.origin || '*';

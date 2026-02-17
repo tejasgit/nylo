@@ -27,7 +27,7 @@ nylo/
 │   ├── basic.html                 # Minimal client-side integration
 │   └── server.ts                  # TypeScript Express server example
 ├── LICENSE                        # MIT License
-└── LICENSE-COMMERCIAL             # Commercial License for cross-domain features
+└── COMMERCIAL-LICENSE             # Commercial License for cross-domain features
 ```
 
 ## Key Components

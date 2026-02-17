@@ -5,7 +5,7 @@
  * Licensed under MIT License (see LICENSE)
  *
  * COMMERCIAL NOTICE: Cross-domain identity synchronization is part of
- * the WTX-1 protocol covered by LICENSE-COMMERCIAL.
+ * the WTX-1 protocol covered by COMMERCIAL-LICENSE.
  */
 
 import type { Request, Response } from "express";

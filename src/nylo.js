@@ -7,7 +7,7 @@
  *
  * COMMERCIAL NOTICE: Cross-domain identity features (WTX-1 protocol,
  * WaiTag system, encrypted configuration) require a commercial license
- * for production use. See LICENSE-COMMERCIAL for details.
+ * for production use. See COMMERCIAL-LICENSE for details.
  *
  * @see https://github.com/tejasgit/nylo
  */
@@ -135,7 +135,7 @@
      * Format: wai_<timestamp_base36>_<random><domain_hash>
      *
      * COMMERCIAL: This function is part of the cross-domain identity
-     * system covered by LICENSE-COMMERCIAL.
+     * system covered by COMMERCIAL-LICENSE.
      */
     generateWaiTag: function(domain) {
       var timestamp = Date.now();
@@ -265,7 +265,7 @@
    *
    * This module implements the WTX-1 protocol for cross-domain
    * identity preservation. Production use requires a commercial license.
-   * See LICENSE-COMMERCIAL for details.
+   * See COMMERCIAL-LICENSE for details.
    */
   var CrossDomainIdentity = {
     checkForCrossDomainToken: function() {
@@ -461,7 +461,7 @@
    * COMMERCIAL FEATURE: Encrypted Configuration
    *
    * Dashboard-controlled tracking via AES-GCM encrypted config.
-   * See LICENSE-COMMERCIAL for details.
+   * See COMMERCIAL-LICENSE for details.
    */
   function parseEncryptedConfig(encConfig, custId) {
     if (!encConfig) {

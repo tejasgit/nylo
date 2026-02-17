@@ -8,7 +8,7 @@
     "src/",
     "server/",
     "LICENSE",
-    "LICENSE-COMMERCIAL",
+    "COMMERCIAL-LICENSE",
     "README.md"
   ],
   "scripts": {

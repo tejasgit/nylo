@@ -149,7 +149,7 @@ nylo/
 │   ├── basic.html                 # Minimal client-side integration
 │   └── server.ts                  # Complete Express server example
 ├── LICENSE                        # MIT License
-└── LICENSE-COMMERCIAL             # Commercial License for cross-domain features
+└── COMMERCIAL-LICENSE             # Commercial License for cross-domain features
 ```
 
 ### Client-Side Modules
@@ -255,7 +255,7 @@ Nylo is dual-licensed:
 
 **MIT License** -- Core tracking (page views, clicks, forms, events, batching, retry logic). Free for any use.
 
-**Commercial License** -- Cross-domain identity features (WTX-1 protocol, WaiTag system, encrypted configuration, domain authorization). Free for personal and academic use. Production commercial use requires a [commercial license](LICENSE-COMMERCIAL).
+**Commercial License** -- Cross-domain identity features (WTX-1 protocol, WaiTag system, encrypted configuration, domain authorization). Free for personal and academic use. Production commercial use requires a [commercial license](COMMERCIAL-LICENSE).
 
 | Use Case | License |
 |----------|---------|
