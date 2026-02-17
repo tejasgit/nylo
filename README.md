@@ -276,16 +276,17 @@ See [SECURITY.md](SECURITY.md) for our security policy and how to report vulnera
 
 Nylo is dual-licensed. See [LICENSING.md](LICENSING.md) for the full breakdown of what's free vs commercial.
 
-**MIT License** -- Core tracking (page views, clicks, forms, events, batching, retry logic). Free for any use.
+**MIT License** -- Core tracking (page views, clicks, forms, events, batching, retry logic). Free for personal **and** commercial use, no restrictions.
 
-**Commercial License** -- Cross-domain identity features (WTX-1 protocol, WaiTag system, encrypted configuration, domain authorization). Free for personal and academic use. Production commercial use requires a [commercial license](COMMERCIAL-LICENSE).
+**Commercial License** -- Cross-domain identity features only (WTX-1 protocol, WaiTag system, encrypted configuration, domain authorization). Required for production commercial use. Free for personal, academic, and evaluation use.
 
-| Use Case | License |
-|----------|---------|
-| Single-domain tracking | MIT (free) |
-| Personal / academic projects | MIT (free) |
-| Cross-domain tracking in production | Commercial |
-| Integrating WTX-1 into your product | Commercial |
+| Use Case | License | Cost |
+|----------|---------|------|
+| Single-domain tracking (personal or commercial) | MIT | Free |
+| Single-domain tracking in a SaaS product | MIT | Free |
+| Cross-domain features for personal/academic use | Commercial (free tier) | Free |
+| Cross-domain features in commercial production | Commercial | [Contact us](mailto:hello@waifind.com) |
+| Integrating WTX-1 into your product | Commercial | [Contact us](mailto:hello@waifind.com) |
 
 For licensing inquiries: hello@waifind.com
 
