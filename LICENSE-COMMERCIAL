@@ -1,0 +1,91 @@
+Nylo Commercial License Agreement
+Version 1.0
+
+Copyright (c) 2024-2026 Nylo. All rights reserved.
+
+NOTICE: The cross-domain identity features of the Nylo SDK are protected by
+patent-pending claims (U.S. Non-Provisional Patent Application). These features
+include, but are not limited to:
+
+  1. Cross-Domain Context Preservation (WTX-1 Protocol)
+     - Cross-domain token exchange and verification
+     - Identity transfer across unrelated domains without third-party cookies
+     - URL fragment and postMessage-based token transport
+
+  2. WaiTag Pseudonymous Identity System
+     - Domain-bound pseudonymous identifier generation
+     - Multi-layer hierarchical identity storage
+     - Cross-domain identity resolution and matching
+
+  3. Encrypted Configuration System
+     - AES-GCM encrypted tracking configuration
+     - Customer-specific key derivation
+     - Domain authorization and allowlisting
+
+  4. Confidence-Weighted Identity Resolution
+     - Fingerprint-based cross-domain identity matching
+     - Canonical identity selection across domains
+
+GRANT OF LICENSE
+
+Subject to the terms of this Agreement, a Commercial License grants the
+Licensee a non-exclusive, non-transferable right to use the cross-domain
+features of the Nylo SDK in production environments.
+
+COMMERCIAL USE DEFINITION
+
+"Commercial Use" means any use of the cross-domain features in connection with:
+  (a) A product or service offered to third parties (whether paid or free)
+  (b) Internal business operations processing more than 10,000 events per month
+  (c) Integration into proprietary analytics, tracking, or personalization
+      platforms
+
+PERMITTED FREE USE
+
+The following uses of cross-domain features do NOT require a commercial license:
+  (a) Personal, non-commercial projects
+  (b) Academic research and educational purposes
+  (c) Evaluation and testing in non-production environments
+  (d) Open-source projects with fewer than 10,000 monthly events
+  (e) Contributing improvements back to the Nylo open-source project
+
+RESTRICTIONS
+
+Without a Commercial License, Licensees may NOT:
+  (a) Use cross-domain features in production for commercial purposes
+  (b) Sublicense, sell, or redistribute the cross-domain features as part
+      of a competing analytics or tracking product
+  (c) Remove or modify patent notices, license headers, or attribution
+      requirements from the source code
+  (d) Claim ownership of the patent-pending technology
+
+PATENT NOTICE
+
+The cross-domain identity technology implemented in this software is the
+subject of a U.S. Non-Provisional Patent Application. Any unauthorized
+commercial use may constitute patent infringement.
+
+PRICING AND CONTACT
+
+Commercial licenses are available on a per-organization basis. Pricing is
+determined by:
+  - Monthly event volume
+  - Number of tracked domains
+  - Enterprise support requirements
+
+For licensing inquiries:
+  Email: licensing@nylo.dev
+  Web:   https://nylo.dev/commercial
+
+TERMINATION
+
+This license is effective until terminated. It terminates automatically if
+the Licensee fails to comply with any term. Upon termination, the Licensee
+must cease all commercial use of the cross-domain features.
+
+DISCLAIMER
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED. IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY DIRECT,
+INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES ARISING
+FROM THE USE OF THIS SOFTWARE.

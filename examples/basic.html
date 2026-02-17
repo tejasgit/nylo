@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nylo - Basic Integration Example</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 800px; margin: 40px auto; padding: 0 20px; }
+    h1 { color: #1a1a1a; }
+    button { padding: 10px 20px; margin: 5px; cursor: pointer; border: 1px solid #ccc; border-radius: 4px; background: #fff; }
+    button:hover { background: #f0f0f0; }
+    pre { background: #f5f5f5; padding: 15px; border-radius: 4px; overflow-x: auto; }
+    #output { min-height: 100px; }
+  </style>
+</head>
+<body>
+  <h1>Nylo Analytics - Basic Example</h1>
+  <p>Open your browser console to see tracking events.</p>
+
+  <h2>Actions</h2>
+  <button onclick="trackCustom()">Track Custom Event</button>
+  <button onclick="trackConversion()">Track Conversion</button>
+  <button onclick="showSession()">Show Session</button>
+  <button onclick="showMetrics()">Show Metrics</button>
+  <button onclick="flushEvents()">Flush Events</button>
+
+  <h2>Output</h2>
+  <pre id="output">Click a button above to see results...</pre>
+
+  <script
+    src="/nylo.js"
+    data-customer-id="1"
+    data-debug="true">
+  </script>
+
+  <script>
+    var output = document.getElementById('output');
+
+    window.addEventListener('nyloInitialized', function(e) {
+      output.textContent = 'Nylo initialized!\n' + JSON.stringify(e.detail, null, 2);
+    });
+
+    function trackCustom() {
+      if (window.Nylo) {
+        Nylo.track('demo_click', { source: 'example_page', timestamp: Date.now() });
+        output.textContent = 'Custom event tracked!';
+      }
+    }
+
+    function trackConversion() {
+      if (window.Nylo) {
+        Nylo.trackConversion('demo_signup', 0);
+        output.textContent = 'Conversion tracked!';
+      }
+    }
+
+    function showSession() {
+      if (window.Nylo) {
+        output.textContent = JSON.stringify(Nylo.getSession(), null, 2);
+      }
+    }
+
+    function showMetrics() {
+      if (window.Nylo) {
+        output.textContent = JSON.stringify(Nylo.getMetrics(), null, 2);
+      }
+    }
+
+    function flushEvents() {
+      if (window.Nylo) {
+        Nylo.flush();
+        output.textContent = 'Events flushed!';
+      }
+    }
+  </script>
+</body>
+</html>
