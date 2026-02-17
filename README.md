@@ -101,7 +101,13 @@ See the [examples/](examples/) folder for a complete working setup:
 ```bash
 git clone https://github.com/tejasgit/nylo.git
 cd nylo
-npm install
+
+# Interactive demo with live event dashboard
+cd examples && npm install && npm start
+# Open http://localhost:5000/demo.html
+
+# Minimal example (requires tsx and root dependencies)
+cd .. && npm install
 npx tsx examples/server.ts
 # Open http://localhost:3000/basic.html
 ```
@@ -258,7 +264,7 @@ Nylo is dual-licensed:
 | Cross-domain tracking in production | Commercial |
 | Integrating WTX-1 into your product | Commercial |
 
-For licensing inquiries: licensing@nylo.dev
+For licensing inquiries: hello@waifind.com
 
 ## Academic Research
 

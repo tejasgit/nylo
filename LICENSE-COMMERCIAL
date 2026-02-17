@@ -26,6 +26,15 @@ include, but are not limited to:
      - Fingerprint-based cross-domain identity matching
      - Canonical identity selection across domains
 
+IMPORTANT NOTICE: Cross-Domain Features
+
+The cross-domain identity features of this software, including but not limited
+to the WTX-1 protocol, WaiTag identity system, cross-domain token exchange,
+and encrypted configuration system, are covered by patent-pending claims and
+are licensed separately under this Nylo Commercial License.
+
+Use of these features in production environments requires a commercial license.
+
 GRANT OF LICENSE
 
 Subject to the terms of this Agreement, a Commercial License grants the
@@ -74,8 +83,7 @@ determined by:
   - Enterprise support requirements
 
 For licensing inquiries:
-  Email: licensing@nylo.dev
-  Web:   https://nylo.dev/commercial
+  Email: hello@waifind.com
 
 TERMINATION
 

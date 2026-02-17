@@ -1,0 +1,13 @@
+{
+  "name": "nylo-demo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Interactive demo for the Nylo analytics SDK",
+  "main": "demo-server.js",
+  "scripts": {
+    "start": "node demo-server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0"
+  }
+}

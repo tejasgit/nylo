@@ -19,17 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-IMPORTANT NOTICE: Cross-Domain Features
-
-The cross-domain identity features of this software, including but not limited
-to the WTX-1 protocol, WaiTag identity system, cross-domain token exchange,
-and encrypted configuration system, are covered by patent-pending claims and
-are licensed separately under the Nylo Commercial License.
-
-Use of these features in production environments requires a commercial license.
-See LICENSE-COMMERCIAL for details.
-
-For licensing inquiries, contact: licensing@nylo.dev

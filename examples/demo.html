@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nylo SDK - Interactive Demo</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0a0a0f; color: #e0e0e0; min-height: 100vh; }
+
+    .header {
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      border-bottom: 1px solid #2a2a4a;
+      padding: 20px 32px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .header h1 { font-size: 22px; font-weight: 700; color: #fff; }
+    .header h1 span { color: #6c63ff; }
+    .header .subtitle { font-size: 13px; color: #888; margin-top: 2px; }
+    .badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+    .badge-green { background: rgba(72, 199, 142, 0.15); color: #48c78e; border: 1px solid rgba(72, 199, 142, 0.3); }
+    .badge-purple { background: rgba(108, 99, 255, 0.15); color: #6c63ff; border: 1px solid rgba(108, 99, 255, 0.3); }
+
+    .container { display: grid; grid-template-columns: 340px 1fr; gap: 0; min-height: calc(100vh - 73px); }
+
+    .sidebar {
+      background: #111122;
+      border-right: 1px solid #2a2a4a;
+      padding: 24px;
+      overflow-y: auto;
+    }
+    .sidebar h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 1.5px; color: #6c63ff; margin-bottom: 16px; font-weight: 600; }
+    .sidebar h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: #666; margin: 20px 0 10px; font-weight: 600; }
+
+    .action-btn {
+      display: block;
+      width: 100%;
+      padding: 10px 14px;
+      margin-bottom: 8px;
+      background: #1a1a2e;
+      border: 1px solid #2a2a4a;
+      border-radius: 8px;
+      color: #ccc;
+      font-size: 13px;
+      cursor: pointer;
+      text-align: left;
+      transition: all 0.15s;
+    }
+    .action-btn:hover { background: #222244; border-color: #6c63ff; color: #fff; }
+    .action-btn:active { transform: scale(0.98); }
+    .action-btn .btn-icon { margin-right: 8px; }
+    .action-btn .btn-desc { display: block; font-size: 11px; color: #666; margin-top: 3px; }
+
+    .main { padding: 24px; overflow-y: auto; }
+
+    .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
+    .stat-card {
+      background: #111122;
+      border: 1px solid #2a2a4a;
+      border-radius: 10px;
+      padding: 16px;
+    }
+    .stat-card .stat-label { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #666; }
+    .stat-card .stat-value { font-size: 28px; font-weight: 700; color: #fff; margin-top: 4px; }
+    .stat-card .stat-sub { font-size: 11px; color: #48c78e; margin-top: 2px; }
+
+    .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+
+    .panel {
+      background: #111122;
+      border: 1px solid #2a2a4a;
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 14px 16px;
+      border-bottom: 1px solid #2a2a4a;
+      background: #0d0d1a;
+    }
+    .panel-header h3 { font-size: 13px; font-weight: 600; color: #ccc; }
+    .panel-body { padding: 16px; max-height: 400px; overflow-y: auto; }
+    .panel-full { grid-column: 1 / -1; }
+
+    .event-item {
+      display: flex;
+      align-items: flex-start;
+      padding: 8px 0;
+      border-bottom: 1px solid #1a1a2e;
+      font-size: 12px;
+      animation: fadeIn 0.3s ease;
+    }
+    .event-item:last-child { border-bottom: none; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+
+    .event-dot { width: 8px; height: 8px; border-radius: 50%; margin-right: 10px; margin-top: 4px; flex-shrink: 0; }
+    .event-dot.page_view { background: #6c63ff; }
+    .event-dot.click, .event-dot.button_click { background: #48c78e; }
+    .event-dot.custom_event, .event-dot.demo_click { background: #f39c12; }
+    .event-dot.conversion, .event-dot.demo_signup { background: #e74c3c; }
+    .event-dot.scroll { background: #3498db; }
+    .event-dot.cross_domain_arrival { background: #e91e63; }
+    .event-dot.default { background: #666; }
+
+    .event-type { font-weight: 600; color: #ccc; min-width: 120px; }
+    .event-detail { color: #888; flex: 1; margin-left: 10px; }
+    .event-time { color: #555; font-size: 11px; margin-left: auto; white-space: nowrap; }
+
+    .session-info { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; }
+    .session-info .info-row { display: flex; padding: 6px 0; border-bottom: 1px solid #1a1a2e; }
+    .session-info .info-label { color: #6c63ff; min-width: 110px; font-weight: 600; }
+    .session-info .info-value { color: #ccc; word-break: break-all; }
+
+    .features-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+    .feature-item { display: flex; align-items: center; padding: 4px 0; font-size: 12px; }
+    .feature-dot { width: 6px; height: 6px; border-radius: 50%; margin-right: 8px; }
+    .feature-dot.on { background: #48c78e; }
+    .feature-dot.off { background: #555; }
+
+    .toast-container { position: fixed; bottom: 20px; right: 20px; z-index: 1000; }
+    .toast {
+      background: #1a1a2e;
+      border: 1px solid #6c63ff;
+      border-radius: 8px;
+      padding: 12px 20px;
+      margin-top: 8px;
+      font-size: 13px;
+      color: #ccc;
+      animation: slideIn 0.3s ease;
+      box-shadow: 0 4px 20px rgba(108, 99, 255, 0.2);
+    }
+    @keyframes slideIn { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: translateX(0); } }
+
+    .empty-state { text-align: center; padding: 40px 20px; color: #555; }
+    .empty-state p { font-size: 13px; }
+
+    .wai-tag-display {
+      background: linear-gradient(135deg, rgba(108, 99, 255, 0.1), rgba(72, 199, 142, 0.1));
+      border: 1px solid rgba(108, 99, 255, 0.3);
+      border-radius: 8px;
+      padding: 12px;
+      margin: 12px 0;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 13px;
+      color: #6c63ff;
+      word-break: break-all;
+      text-align: center;
+    }
+
+    @media (max-width: 900px) {
+      .container { grid-template-columns: 1fr; }
+      .stats-grid { grid-template-columns: repeat(2, 1fr); }
+      .panels { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <h1><span>Nylo</span> SDK Demo</h1>
+      <div class="subtitle">Privacy-first cross-domain analytics - Interactive demonstration</div>
+    </div>
+    <div>
+      <span class="badge badge-green" id="status-badge">Initializing...</span>
+      <span class="badge badge-purple">v1.0.0</span>
+    </div>
+  </div>
+
+  <div class="container">
+    <div class="sidebar">
+      <h2>Actions</h2>
+
+      <h3>Event Tracking</h3>
+      <button class="action-btn" onclick="trackPageView()">
+        <span class="btn-icon">&#128196;</span> Track Page View
+        <span class="btn-desc">Record a page view event</span>
+      </button>
+      <button class="action-btn" onclick="trackCustomEvent()">
+        <span class="btn-icon">&#9889;</span> Track Custom Event
+        <span class="btn-desc">Send a custom analytics event</span>
+      </button>
+      <button class="action-btn" onclick="trackConversion()">
+        <span class="btn-icon">&#128176;</span> Track Conversion
+        <span class="btn-desc">Record a conversion with value</span>
+      </button>
+      <button class="action-btn" onclick="trackButtonClick()">
+        <span class="btn-icon">&#128433;</span> Track Button Click
+        <span class="btn-desc">Simulate a button interaction</span>
+      </button>
+
+      <h3>Identity</h3>
+      <button class="action-btn" onclick="showSession()">
+        <span class="btn-icon">&#128100;</span> View Session Info
+        <span class="btn-desc">Current session and WaiTag details</span>
+      </button>
+      <button class="action-btn" onclick="identifyUser()">
+        <span class="btn-icon">&#127919;</span> Identify User
+        <span class="btn-desc">Associate a pseudonymous ID</span>
+      </button>
+
+      <h3>SDK Controls</h3>
+      <button class="action-btn" onclick="showFeatures()">
+        <span class="btn-icon">&#9881;</span> View Active Features
+        <span class="btn-desc">See which tracking features are on</span>
+      </button>
+      <button class="action-btn" onclick="showMetrics()">
+        <span class="btn-icon">&#128202;</span> View Performance
+        <span class="btn-desc">SDK performance metrics</span>
+      </button>
+      <button class="action-btn" onclick="flushEvents()">
+        <span class="btn-icon">&#128228;</span> Flush Queue
+        <span class="btn-desc">Force-send all queued events</span>
+      </button>
+      <button class="action-btn" onclick="refreshStats()">
+        <span class="btn-icon">&#128260;</span> Refresh Stats
+        <span class="btn-desc">Reload server-side statistics</span>
+      </button>
+    </div>
+
+    <div class="main">
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-label">Total Events</div>
+          <div class="stat-value" id="stat-events">0</div>
+          <div class="stat-sub">server-side</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Sessions</div>
+          <div class="stat-value" id="stat-sessions">0</div>
+          <div class="stat-sub">unique</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">WaiTags</div>
+          <div class="stat-value" id="stat-waitags">0</div>
+          <div class="stat-sub">registered</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Queue Size</div>
+          <div class="stat-value" id="stat-queue">0</div>
+          <div class="stat-sub">pending</div>
+        </div>
+      </div>
+
+      <div class="panels">
+        <div class="panel panel-full">
+          <div class="panel-header">
+            <h3>Live Event Stream</h3>
+            <span class="badge badge-green" id="stream-status">connected</span>
+          </div>
+          <div class="panel-body" id="event-log">
+            <div class="empty-state">
+              <p>Events will appear here in real-time as you interact with the SDK.</p>
+              <p>Click an action on the left to get started.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel" id="session-panel" style="display:none">
+          <div class="panel-header">
+            <h3>Session Details</h3>
+          </div>
+          <div class="panel-body" id="session-details"></div>
+        </div>
+
+        <div class="panel" id="info-panel" style="display:none">
+          <div class="panel-header">
+            <h3 id="info-panel-title">Info</h3>
+          </div>
+          <div class="panel-body" id="info-details"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast-container" id="toast-container"></div>
+
+  <script
+    src="/nylo.js"
+    data-customer-id="1"
+    data-debug="true">
+  </script>
+
+  <script>
+    var eventLog = document.getElementById('event-log');
+    var eventCount = 0;
+    var hasFirstEvent = false;
+
+    function showToast(message) {
+      var container = document.getElementById('toast-container');
+      var toast = document.createElement('div');
+      toast.className = 'toast';
+      toast.textContent = message;
+      container.appendChild(toast);
+      setTimeout(function() { toast.remove(); }, 3000);
+    }
+
+    function addEventToLog(type, detail) {
+      if (!hasFirstEvent) {
+        eventLog.innerHTML = '';
+        hasFirstEvent = true;
+      }
+
+      var dotClass = 'default';
+      if (['page_view'].includes(type)) dotClass = 'page_view';
+      else if (['click', 'button_click'].includes(type)) dotClass = 'click';
+      else if (['custom_event', 'demo_click'].includes(type)) dotClass = 'custom_event';
+      else if (['conversion', 'demo_signup'].includes(type)) dotClass = 'conversion';
+      else if (['scroll', 'scroll_depth'].includes(type)) dotClass = 'scroll';
+      else if (['cross_domain_arrival'].includes(type)) dotClass = 'cross_domain_arrival';
+
+      var now = new Date();
+      var time = now.toLocaleTimeString();
+
+      var item = document.createElement('div');
+      item.className = 'event-item';
+      item.innerHTML =
+        '<div class="event-dot ' + dotClass + '"></div>' +
+        '<span class="event-type">' + type + '</span>' +
+        '<span class="event-detail">' + (detail || '') + '</span>' +
+        '<span class="event-time">' + time + '</span>';
+
+      eventLog.insertBefore(item, eventLog.firstChild);
+      eventCount++;
+
+      if (eventLog.children.length > 50) {
+        eventLog.removeChild(eventLog.lastChild);
+      }
+    }
+
+    function trackPageView() {
+      if (window.Nylo) {
+        Nylo.track('page_view', { page: window.location.pathname, title: document.title });
+        addEventToLog('page_view', window.location.pathname);
+        showToast('Page view tracked');
+      }
+    }
+
+    function trackCustomEvent() {
+      if (window.Nylo) {
+        var names = ['signup_click', 'feature_used', 'tutorial_started', 'plan_viewed', 'settings_opened'];
+        var name = names[Math.floor(Math.random() * names.length)];
+        Nylo.track(name, { source: 'demo', timestamp: Date.now() });
+        addEventToLog(name, 'source: demo');
+        showToast('Custom event "' + name + '" tracked');
+      }
+    }
+
+    function trackConversion() {
+      if (window.Nylo) {
+        var value = Math.floor(Math.random() * 200) + 10;
+        Nylo.trackConversion('purchase', value);
+        addEventToLog('conversion', '$' + value + '.00');
+        showToast('Conversion tracked: $' + value);
+      }
+    }
+
+    function trackButtonClick() {
+      if (window.Nylo) {
+        Nylo.track('button_click', { element: 'demo-button', action: 'click' });
+        addEventToLog('button_click', 'element: demo-button');
+        showToast('Button click tracked');
+      }
+    }
+
+    function showSession() {
+      if (window.Nylo) {
+        var session = Nylo.getSession();
+        var panel = document.getElementById('session-panel');
+        var details = document.getElementById('session-details');
+        panel.style.display = 'block';
+
+        var waiTagHtml = session.waiTag
+          ? '<div class="wai-tag-display">' + session.waiTag + '</div>'
+          : '<div class="wai-tag-display" style="color:#666">Not yet generated</div>';
+
+        details.innerHTML =
+          '<div class="session-info">' +
+          waiTagHtml +
+          '<div class="info-row"><span class="info-label">Session ID</span><span class="info-value">' + (session.sessionId || 'N/A') + '</span></div>' +
+          '<div class="info-row"><span class="info-label">User ID</span><span class="info-value">' + (session.userId || 'anonymous') + '</span></div>' +
+          '<div class="info-row"><span class="info-label">Customer ID</span><span class="info-value">' + (session.customerId || '1') + '</span></div>' +
+          '<div class="info-row"><span class="info-label">Queue Size</span><span class="info-value">' + (session.queueSize || 0) + '</span></div>' +
+          '<div class="info-row"><span class="info-label">Cross-Domain</span><span class="info-value">' + (session.crossDomainSynced ? 'Synced' : 'Not synced') + '</span></div>' +
+          '</div>';
+
+        addEventToLog('session_view', 'WaiTag: ' + (session.waiTag ? session.waiTag.substring(0, 20) + '...' : 'N/A'));
+        showToast('Session info loaded');
+      }
+    }
+
+    function identifyUser() {
+      if (window.Nylo) {
+        var userId = 'user-' + Math.random().toString(36).substring(2, 8);
+        Nylo.identify(userId);
+        addEventToLog('identify', userId);
+        showToast('User identified as ' + userId);
+      }
+    }
+
+    function showFeatures() {
+      if (window.Nylo) {
+        var features = Nylo.getFeatures();
+        var infoPanel = document.getElementById('info-panel');
+        var infoDetails = document.getElementById('info-details');
+        document.getElementById('info-panel-title').textContent = 'Active Features';
+        infoPanel.style.display = 'block';
+
+        var html = '<div class="features-grid">';
+        for (var key in features) {
+          var on = features[key];
+          var label = key.replace('track', '').replace(/([A-Z])/g, ' $1').trim();
+          html += '<div class="feature-item">' +
+            '<div class="feature-dot ' + (on ? 'on' : 'off') + '"></div>' +
+            '<span style="color:' + (on ? '#ccc' : '#555') + '">' + label + '</span>' +
+            '</div>';
+        }
+        html += '</div>';
+        infoDetails.innerHTML = html;
+        showToast('Features loaded');
+      }
+    }
+
+    function showMetrics() {
+      if (window.Nylo) {
+        var metrics = Nylo.getMetrics();
+        var infoPanel = document.getElementById('info-panel');
+        var infoDetails = document.getElementById('info-details');
+        document.getElementById('info-panel-title').textContent = 'Performance Metrics';
+        infoPanel.style.display = 'block';
+
+        var html = '<div class="session-info">';
+        html += '<div class="info-row"><span class="info-label">Events</span><span class="info-value">' + (metrics.eventsProcessed || 0) + ' processed</span></div>';
+        html += '<div class="info-row"><span class="info-label">Batches</span><span class="info-value">' + (metrics.batchesSent || 0) + ' sent</span></div>';
+        html += '<div class="info-row"><span class="info-label">Errors</span><span class="info-value">' + (metrics.errors || 0) + '</span></div>';
+        html += '<div class="info-row"><span class="info-label">Last Batch</span><span class="info-value">' + (metrics.lastBatchTime || 0) + 'ms</span></div>';
+        html += '<div class="info-row"><span class="info-label">Cross-Domain</span><span class="info-value">' + (metrics.crossDomainSyncs || 0) + ' syncs</span></div>';
+        html += '<div class="info-row"><span class="info-label">Queue</span><span class="info-value">' + (metrics.queueSize || 0) + ' pending</span></div>';
+        if (metrics.memoryUsage) {
+          html += '<div class="info-row"><span class="info-label">Memory</span><span class="info-value">' + metrics.memoryUsage.used + 'MB / ' + metrics.memoryUsage.total + 'MB</span></div>';
+        }
+        html += '</div>';
+        infoDetails.innerHTML = html;
+        showToast('Metrics loaded');
+      }
+    }
+
+    function flushEvents() {
+      if (window.Nylo) {
+        Nylo.flush();
+        addEventToLog('flush', 'Queue flushed');
+        showToast('Events flushed to server');
+        setTimeout(refreshStats, 1000);
+      }
+    }
+
+    function refreshStats() {
+      fetch('/api/stats')
+        .then(function(r) { return r.json(); })
+        .then(function(stats) {
+          document.getElementById('stat-events').textContent = stats.totalEvents;
+          document.getElementById('stat-sessions').textContent = stats.uniqueSessions;
+          document.getElementById('stat-waitags').textContent = stats.registeredWaiTags;
+          if (window.Nylo) {
+            var session = Nylo.getSession();
+            document.getElementById('stat-queue').textContent = session.queueSize || 0;
+          }
+        })
+        .catch(function() {});
+    }
+
+    window.addEventListener('nyloInitialized', function(e) {
+      document.getElementById('status-badge').textContent = 'SDK Active';
+      addEventToLog('sdk_init', 'Nylo v1.0.0 initialized');
+      refreshStats();
+    });
+
+    var evtSource;
+    function connectEventStream() {
+      evtSource = new EventSource('/api/events/stream');
+      evtSource.onopen = function() {
+        document.getElementById('stream-status').textContent = 'connected';
+      };
+      evtSource.onmessage = function(e) {
+        try {
+          var event = JSON.parse(e.data);
+          refreshStats();
+        } catch (err) {}
+      };
+      evtSource.onerror = function() {
+        document.getElementById('stream-status').textContent = 'reconnecting...';
+        setTimeout(function() {
+          if (evtSource) evtSource.close();
+          connectEventStream();
+        }, 3000);
+      };
+    }
+    connectEventStream();
+
+    setInterval(refreshStats, 5000);
+  </script>
+</body>
+</html>
