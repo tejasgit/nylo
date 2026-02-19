@@ -70,6 +70,9 @@ cd examples && npm install && npm start
 - Contact: hello@waifind.com
 
 ## Recent Changes
+- 2026-02-19: Implemented engineer feedback: anonymous tracking mode, rate limiting, security headers, hash-fragment token transport
+- 2026-02-19: Created Adobe pitch document (github/ADOBE-PITCH.md)
+- 2026-02-19: Clarified licensing: MIT free for all use (personal + commercial), commercial license only for cross-domain features
 - 2026-02-17: Added LICENSING.md, SECURITY.md, SQLite storage adapter, RFC draft, starter issues
 - 2026-02-17: Fixed "fingerprinting" wording in COMMERCIAL-LICENSE
 - 2026-02-17: Added "What Nylo Is / Is Not" section to README

@@ -22,7 +22,8 @@
     compressionEnabled: true,
     performanceMonitoring: true,
     securityValidation: true,
-    crossDomainEnabled: true
+    crossDomainEnabled: true,
+    anonymousMode: false
   };
 
   var state = {
@@ -269,8 +270,16 @@
    */
   var CrossDomainIdentity = {
     checkForCrossDomainToken: function() {
-      var urlParams = new URLSearchParams(window.location.search);
-      var crossDomainToken = urlParams.get('nylo_token') || urlParams.get('wai_token');
+      var crossDomainToken = null;
+      var hash = window.location.hash;
+      if (hash) {
+        var hashParams = new URLSearchParams(hash.substring(1));
+        crossDomainToken = hashParams.get('nylo_token') || hashParams.get('wai_token');
+      }
+      if (!crossDomainToken) {
+        var urlParams = new URLSearchParams(window.location.search);
+        crossDomainToken = urlParams.get('nylo_token') || urlParams.get('wai_token');
+      }
 
       if (crossDomainToken) {
         Logger.info('Cross-domain token detected');
@@ -866,6 +875,104 @@
       }
     }
 
+    if (script && script.getAttribute('data-anonymous') === 'true') {
+      config.anonymousMode = true;
+    }
+
+    if (config.anonymousMode) {
+      state.sessionId = 'anon_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 10);
+      state.waiTag = null;
+      state.userId = null;
+      Logger.info('Anonymous mode - no identity tracking');
+
+      parseEncryptedConfig(encryptedConfig, customerId)
+        .then(function() {
+          Tracking.pageView({
+            initializationType: 'anonymous_session',
+            waiTag: null
+          });
+
+          setupEventListeners();
+          setupPageLifecycle();
+
+          state.batchTimer = setInterval(sendBatch, config.batchInterval);
+
+          window.Nylo = {
+            track: Tracking.customEvent,
+            trackConversion: Tracking.conversion,
+            identify: function() {
+              Logger.info('identify() is a no-op in anonymous mode');
+            },
+            getSession: function() {
+              return {
+                sessionId: state.sessionId,
+                waiTag: null,
+                userId: null,
+                customerId: customerId,
+                queueSize: state.eventQueue.length,
+                crossDomainSynced: false
+              };
+            },
+            getCrossDomainIdentity: function() {
+              return {
+                waiTag: null,
+                identitySynced: false,
+                referringDomain: null
+              };
+            },
+            setConsent: function(consent) {
+              if (consent && consent.analytics === false) {
+                state.waiTag = null;
+                state.userId = null;
+                state.crossDomainData.identitySynced = false;
+                config.anonymousMode = true;
+                try { localStorage.removeItem('nylo_identity'); } catch(e) {}
+                try { sessionStorage.removeItem('nylo_identity'); } catch(e) {}
+                Logger.info('Consent denied - switched to anonymous mode');
+              } else if (consent && consent.analytics === true) {
+                config.anonymousMode = false;
+                var storedIdentity = CrossDomainIdentity.getStoredIdentityData();
+                if (storedIdentity && storedIdentity.sessionId && storedIdentity.waiTag) {
+                  state.sessionId = storedIdentity.sessionId;
+                  state.waiTag = storedIdentity.waiTag;
+                  state.userId = storedIdentity.userId;
+                } else {
+                  CrossDomainIdentity.generateNewIdentity();
+                }
+                CrossDomainIdentity.checkForCrossDomainToken();
+                Logger.info('Consent granted - identity tracking enabled');
+              }
+            },
+            getConsent: function() {
+              return { analytics: !config.anonymousMode };
+            },
+            flush: sendBatch,
+            getMetrics: Performance.getMetrics,
+            getFeatures: function() { return Object.assign({}, TrackingFeatures); },
+            version: config.version,
+            destroy: cleanup
+          };
+
+          state.initialized = true;
+
+          var duration = Performance.measure('init', 'init-start');
+          Logger.info('Initialization complete (' + (duration || 0).toFixed(2) + 'ms)');
+
+          window.dispatchEvent(new CustomEvent('nyloInitialized', {
+            detail: {
+              version: config.version,
+              waiTag: state.waiTag,
+              crossDomainEnabled: false
+            }
+          }));
+        })
+        .catch(function(error) {
+          Logger.error('Initialization failed:', error);
+          Tracking.error(error, { context: 'initialization' });
+        });
+      return;
+    }
+
     CrossDomainIdentity.checkForCrossDomainToken()
       .then(function(crossDomainSuccess) {
         if (!crossDomainSuccess) {
@@ -919,6 +1026,24 @@
               identitySynced: state.crossDomainData.identitySynced,
               referringDomain: state.crossDomainData.referringDomain
             };
+          },
+          setConsent: function(consent) {
+            if (consent && consent.analytics === false) {
+              state.waiTag = null;
+              state.userId = null;
+              state.crossDomainData.identitySynced = false;
+              config.anonymousMode = true;
+              try { localStorage.removeItem('nylo_identity'); } catch(e) {}
+              try { sessionStorage.removeItem('nylo_identity'); } catch(e) {}
+              Logger.info('Consent denied - switched to anonymous mode');
+            } else if (consent && consent.analytics === true) {
+              config.anonymousMode = false;
+              CrossDomainIdentity.generateNewIdentity();
+              Logger.info('Consent granted - identity tracking enabled');
+            }
+          },
+          getConsent: function() {
+            return { analytics: !config.anonymousMode };
           },
           flush: sendBatch,
           getMetrics: Performance.getMetrics,
