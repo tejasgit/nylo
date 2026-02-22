@@ -6,7 +6,9 @@ A Proposal of the [Privacy Community Group](https://privacycg.github.io/).
 
 **Specification:** [IETF Internet-Draft: draft-surampudi-wtx1-00](https://datatracker.ietf.org/doc/draft-surampudi-wtx1/)
 
-**Reference Implementation:** [github.com/tejasgit/wtx-1](https://github.com/tejasgit/wtx-1) (MIT License)
+**Reference Implementation:** [github.com/tejasgit/nylo](https://github.com/tejasgit/nylo) (MIT License)
+
+**Protocol Specification:** [github.com/tejasgit/wtx-1](https://github.com/tejasgit/wtx-1)
 
 **Issue Tracker:** https://github.com/tejasgit/wtx-1/issues
 

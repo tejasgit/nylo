@@ -63,9 +63,9 @@ WTX-1 is complementary to several active Privacy CG proposals:
 
 An IETF Internet-Draft has been submitted: [`draft-surampudi-wtx1-00`](https://datatracker.ietf.org/doc/draft-surampudi-wtx1/)
 
-A reference implementation (Nylo SDK) is available under MIT license: [github.com/tejasgit/wtx-1](https://github.com/tejasgit/wtx-1)
+Reference implementation (Nylo SDK): [github.com/tejasgit/nylo](https://github.com/tejasgit/nylo) (MIT License)
 
-Detailed explainer: [WTX-1 Explainer](https://github.com/tejasgit/wtx-1/blob/main/github/W3C-EXPLAINER.md)
+Protocol specification: [github.com/tejasgit/wtx-1](https://github.com/tejasgit/wtx-1)
 
 ## Questions for the group
 
