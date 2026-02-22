@@ -992,7 +992,7 @@ Author's Address
    Ravi Teja Surampudi
    Nylo Project
    Email: ravisurampudi@outlook.com
-   URI:   https://github.com/nickolaev/nylo
+   URI:   https://github.com/tejasgit/nylo
 
 
 
