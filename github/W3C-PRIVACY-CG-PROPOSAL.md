@@ -44,11 +44,16 @@ WTX-1 (WaiTag Transfer Protocol, version 1) is a protocol for preserving pseudon
 - No server-side cookie syncing
 - No probabilistic ID matching
 
-### Known limitations and caveats
+### Security mitigations
 
-- **Token visibility window:** Between page load and SDK cleanup (~100ms), the hash fragment is accessible to any JavaScript on the destination page, including third-party scripts and browser extensions.
-- **URL sharing:** If a user copies and shares a URL before cleanup, the token could be exposed (mitigated by short expiration).
-- **Query parameter fallback:** When hash fragments are unavailable and query parameters are used as fallback, tokens are visible to the destination server.
+- **Early-cleanup script:** An inline `<head>` script strips tokens from the URL hash fragment before any other scripts (including third-party scripts) execute. The token is stashed in a short-lived JavaScript variable and the URL is cleaned via `history.replaceState()`, reducing the visibility window to near-zero.
+- **Hash-only transport by default:** Query parameter token transport is disabled by default. Hash fragments are never sent to servers ([RFC 3986 §3.5](https://www.rfc-editor.org/rfc/rfc3986#section-3.5)). Query parameter fallback is available as an opt-in for environments where hash fragments are unreliable, with the understanding that query parameters are visible to servers.
+- **One-time-use tokens:** Each token can only be verified once server-side. Even if a token is exposed (e.g., via URL sharing before cleanup), it is invalidated after first use.
+- **Short expiration:** Tokens expire after 5 minutes by default, limiting the window for any exposure.
+
+### Remaining limitations
+
+- **Browser extensions:** Extensions with content script access can still read the hash fragment before the early-cleanup script runs, though the short expiration and one-time-use mitigate the impact.
 - **Scope:** This is an application-layer protocol, not a browser platform feature. It does not provide the same guarantees a browser-mediated mechanism could offer.
 
 ## Relationship to existing Privacy CG work

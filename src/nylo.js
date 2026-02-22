@@ -23,7 +23,8 @@
     performanceMonitoring: true,
     securityValidation: true,
     crossDomainEnabled: true,
-    anonymousMode: false
+    anonymousMode: false,
+    allowQueryParamTokens: false
   };
 
   var state = {
@@ -266,13 +267,22 @@
     checkForCrossDomainToken: function() {
       var crossDomainToken = null;
       var tokenSource = null;
-      var hash = window.location.hash;
-      if (hash) {
-        var hashParams = new URLSearchParams(hash.substring(1));
-        crossDomainToken = hashParams.get('nylo_token') || hashParams.get('wai_token');
-        if (crossDomainToken) tokenSource = 'hash';
+
+      if (window.__nylo_early_token) {
+        crossDomainToken = window.__nylo_early_token;
+        tokenSource = 'early_cleanup';
+        delete window.__nylo_early_token;
       }
+
       if (!crossDomainToken) {
+        var hash = window.location.hash;
+        if (hash) {
+          var hashParams = new URLSearchParams(hash.substring(1));
+          crossDomainToken = hashParams.get('nylo_token') || hashParams.get('wai_token');
+          if (crossDomainToken) tokenSource = 'hash';
+        }
+      }
+      if (!crossDomainToken && config.allowQueryParamTokens) {
         var urlParams = new URLSearchParams(window.location.search);
         crossDomainToken = urlParams.get('nylo_token') || urlParams.get('wai_token');
         if (crossDomainToken) tokenSource = 'search';
@@ -287,23 +297,28 @@
           state.crossDomainData.referringDomain = null;
         }
 
-        try {
-          if (tokenSource === 'hash') {
-            var cleanHash = hash.substring(1).split('&').filter(function(p) {
-              return !p.startsWith('nylo_token=') && !p.startsWith('wai_token=');
-            }).join('&');
-            var newHash = cleanHash ? '#' + cleanHash : '';
-            history.replaceState(null, '', window.location.pathname + window.location.search + newHash);
-          } else {
-            var cleanParams = new URLSearchParams(window.location.search);
-            cleanParams.delete('nylo_token');
-            cleanParams.delete('wai_token');
-            var newSearch = cleanParams.toString() ? '?' + cleanParams.toString() : '';
-            history.replaceState(null, '', window.location.pathname + newSearch + window.location.hash);
+        if (tokenSource === 'early_cleanup') {
+          Logger.debug('Token already cleaned by early-cleanup script');
+        } else {
+          try {
+            if (tokenSource === 'hash') {
+              var currentHash = window.location.hash;
+              var cleanHash = currentHash.substring(1).split('&').filter(function(p) {
+                return !p.startsWith('nylo_token=') && !p.startsWith('wai_token=');
+              }).join('&');
+              var newHash = cleanHash ? '#' + cleanHash : '';
+              history.replaceState(null, '', window.location.pathname + window.location.search + newHash);
+            } else if (tokenSource === 'search') {
+              var cleanParams = new URLSearchParams(window.location.search);
+              cleanParams.delete('nylo_token');
+              cleanParams.delete('wai_token');
+              var newSearch = cleanParams.toString() ? '?' + cleanParams.toString() : '';
+              history.replaceState(null, '', window.location.pathname + newSearch + window.location.hash);
+            }
+            Logger.debug('Cross-domain token cleaned from URL');
+          } catch (e) {
+            Logger.debug('Could not clean token from URL');
           }
-          Logger.debug('Cross-domain token cleaned from URL');
-        } catch (e) {
-          Logger.debug('Could not clean token from URL');
         }
 
         return this.verifyAndProcessToken(crossDomainToken);
@@ -904,6 +919,9 @@
     if (script && script.getAttribute('data-anonymous') === 'true') {
       config.anonymousMode = true;
     }
+    if (script && script.getAttribute('data-allow-query-params') === 'true') {
+      config.allowQueryParamTokens = true;
+    }
 
     if (config.anonymousMode) {
       state.sessionId = 'anon_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 10);
@@ -975,6 +993,7 @@
             flush: sendBatch,
             getMetrics: Performance.getMetrics,
             getFeatures: function() { return Object.assign({}, TrackingFeatures); },
+            getEarlyCleanupScript: EarlyCleanup.getScript,
             version: config.version,
             destroy: cleanup
           };
@@ -1074,6 +1093,7 @@
           flush: sendBatch,
           getMetrics: Performance.getMetrics,
           getFeatures: function() { return Object.assign({}, TrackingFeatures); },
+          getEarlyCleanupScript: EarlyCleanup.getScript,
           version: config.version,
           destroy: cleanup
         };
@@ -1096,6 +1116,28 @@
         Tracking.error(error, { context: 'initialization' });
       });
   }
+
+  var EarlyCleanup = {
+    getScript: function() {
+      return '<scr' + 'ipt>' +
+        '(function(){' +
+          'try{' +
+            'var h=window.location.hash;' +
+            'if(h&&(h.indexOf("nylo_token=")>-1||h.indexOf("wai_token=")>-1)){' +
+              'var p=new URLSearchParams(h.substring(1));' +
+              'var t=p.get("nylo_token")||p.get("wai_token");' +
+              'if(t){' +
+                'window.__nylo_early_token=t;' +
+                'p.delete("nylo_token");p.delete("wai_token");' +
+                'var n=p.toString();' +
+                'history.replaceState(null,"",window.location.pathname+window.location.search+(n?"#"+n:""));' +
+              '}' +
+            '}' +
+          '}catch(e){}' +
+        '})();' +
+      '</scr' + 'ipt>';
+    }
+  };
 
   function cleanup() {
     if (state.batchTimer) {

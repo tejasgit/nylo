@@ -154,7 +154,7 @@ https://shop.example.com/product/123#nylo_token=eyJ3...
 - The token is only accessible to client-side JavaScript on the destination page
 - The client reads the token, sends it to a verification endpoint via a dedicated API call, and immediately cleans up the URL using `history.replaceState()`
 
-**Fallback:** URL query parameters (`?nylo_token=...`) are supported as a fallback for environments where hash fragments are unreliable, with the understanding that query parameters are visible to servers.
+**Opt-in fallback:** URL query parameters (`?nylo_token=...`) are available as an opt-in fallback (disabled by default) for environments where hash fragments are unreliable. Query parameters are visible to the destination server in HTTP requests and server logs, so this option trades some privacy for compatibility. Implementors who enable it SHOULD implement server-side log redaction.
 
 ### Token Verification
 
@@ -249,7 +249,10 @@ Hash fragments were chosen as the primary transport mechanism for several reason
 
 4. **Immediate cleanup:** The token can be removed from the URL immediately using `history.replaceState()` without triggering a page reload.
 
-**Trade-off:** Some browser extensions or third-party scripts on the destination page could read the hash fragment before cleanup. This is mitigated by the token's short expiration and one-time-use verification.
+**Trade-off:** Some browser extensions with content script access could read the hash fragment before cleanup. This is mitigated by:
+- **Early-cleanup script:** An inline `<head>` script that executes before any other scripts, extracting the token into a short-lived JavaScript variable and immediately cleaning the URL. This eliminates the visibility window for third-party scripts.
+- **One-time-use verification:** Each token is only accepted once server-side, so an intercepted token cannot be replayed.
+- **Short expiration:** Tokens default to 5-minute expiry.
 
 ### Why DNS TXT Records
 
@@ -337,11 +340,13 @@ Implementations SHOULD provide users with:
 
 1. **Server-side correlation:** Organizations operating multiple authorized domains can correlate WaiTags server-side. The protocol limits correlation to DNS-authorized domains but cannot prevent the authorizing organization from performing it.
 
-2. **Token visibility window:** Between the moment a user arrives at the destination page and the moment the SDK cleans the URL, the hash fragment (containing the token) is visible to any JavaScript running on the page. This window is typically under 100ms but cannot be eliminated entirely.
+2. **Token visibility to browser extensions:** The early-cleanup `<head>` script eliminates the visibility window for third-party page scripts. However, browser extensions with content script access may execute before the early-cleanup script. This risk is mitigated by one-time-use token verification and short expiration (default 5 minutes).
 
 3. **Referrer leakage:** While modern browsers generally do not include hash fragments in `Referer` headers, implementations SHOULD set `Referrer-Policy: no-referrer` or `Referrer-Policy: same-origin` to mitigate edge cases.
 
 4. **Long-lived identifiers:** WaiTags stored in `localStorage` persist until explicitly cleared. Implementations SHOULD implement rotation policies (e.g., regenerate WaiTag every 90 days) to limit the window of potential correlation.
+
+5. **Query parameter opt-in:** If an implementor enables query parameter token transport (disabled by default), tokens become visible to the destination server in HTTP request logs. Implementors who enable this option SHOULD ensure server-side log redaction of token parameters.
 
 ## Considered Alternatives
 
