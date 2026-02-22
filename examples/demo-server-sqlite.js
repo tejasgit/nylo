@@ -51,7 +51,10 @@ app.post('/api/track', async (req, res) => {
   let events = [];
   let common = {};
 
-  if (req.body.common && req.body.events) {
+  if (req.body.events && req.body.events.common && Array.isArray(req.body.events.events)) {
+    common = req.body.events.common;
+    events = req.body.events.events;
+  } else if (req.body.common && Array.isArray(req.body.events)) {
     common = req.body.common;
     events = req.body.events;
   } else if (Array.isArray(req.body.events)) {
