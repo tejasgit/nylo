@@ -1,4 +1,4 @@
-# Cross-domain analytics without cookies, fingerprinting, or login — open protocol + MIT SDK
+# Project Nylo — Privacy-first cross-domain analytics without cookies or fingerprinting
 
 Third-party cookies are dead (Safari ITP, Firefox ETP, Chrome Privacy Sandbox). If you track users across multiple domains, you've lost cross-domain identity. The alternatives — fingerprinting, login walls, PII sharing — all have serious privacy or legal problems.
 
