@@ -259,6 +259,12 @@ The token exchange uses URL parameters (primary) or `postMessage` (iframe fallba
 | Max retries | 3 | Retries before circuit breaker |
 | Circuit breaker cooldown | 30 seconds | Cooldown after max retries |
 
+### Server Configuration
+
+| Environment Variable | Default | Description |
+|----------------------|---------|-------------|
+| `TRACKING_DEDUP_WINDOW_SECONDS` | `60` | Time window in seconds for server-side event deduplication |
+
 ## Browser Support
 
 | Browser | Version | Notes |
