@@ -1,6 +1,6 @@
 # W3C Privacy Community Group — Proposal Issue
 
-> **Title:** WTX-1: Privacy-Preserving Cross-Domain Context Preservation Without Cookies or Fingerprinting
+> **Title:** WTX-1: Privacy-Preserving Cross-Domain Context Preservation Without Third-Party Cookies or Fingerprinting
 >
 > **Repository:** [privacycg/proposals](https://github.com/privacycg/proposals/issues/new)
 >
@@ -21,7 +21,7 @@ There is no standardized, privacy-respecting mechanism for preserving pseudonymo
 
 ## Proposed Solution: WTX-1 Protocol
 
-WTX-1 (WaiTag Transfer Protocol, version 1) is a protocol for preserving pseudonymous context across navigations between cooperating domains, without cookies, fingerprinting, or PII collection.
+WTX-1 (WaiTag Transfer Protocol, version 1) is a protocol for preserving pseudonymous context across navigations between cooperating domains, without third-party cookies, fingerprinting, or PII collection.
 
 ### How it works
 
@@ -39,7 +39,7 @@ WTX-1 (WaiTag Transfer Protocol, version 1) is a protocol for preserving pseudon
 
 - No PII collection or derivation
 - No fingerprinting (no hardware, software, or behavioral signals)
-- No third-party cookies or Set-Cookie/Cookie mechanism for cross-domain transfer
+- No third-party cookies or cross-domain Set-Cookie/Cookie mechanism (first-party cookie used only as local storage fallback)
 - No login requirement
 - No server-side cookie syncing
 - No probabilistic ID matching
@@ -63,9 +63,9 @@ WTX-1 is complementary to several active Privacy CG proposals:
 
 An IETF Internet-Draft has been submitted: [`draft-surampudi-wtx1-00`](https://datatracker.ietf.org/doc/draft-surampudi-wtx1/)
 
-A reference implementation (Nylo SDK) is available under MIT license: [github.com/tejasgit/nylo](https://github.com/tejasgit/nylo)
+A reference implementation (Nylo SDK) is available under MIT license: [github.com/tejasgit/wtx-1](https://github.com/tejasgit/wtx-1)
 
-Detailed explainer: [WTX-1 Explainer](https://github.com/tejasgit/nylo/blob/main/github/W3C-EXPLAINER.md)
+Detailed explainer: [WTX-1 Explainer](https://github.com/tejasgit/wtx-1/blob/main/github/W3C-EXPLAINER.md)
 
 ## Questions for the group
 

@@ -6,9 +6,9 @@ A Proposal of the [Privacy Community Group](https://privacycg.github.io/).
 
 **Specification:** [IETF Internet-Draft: draft-surampudi-wtx1-00](https://datatracker.ietf.org/doc/draft-surampudi-wtx1/)
 
-**Reference Implementation:** [github.com/tejasgit/nylo](https://github.com/tejasgit/nylo) (MIT License)
+**Reference Implementation:** [github.com/tejasgit/wtx-1](https://github.com/tejasgit/wtx-1) (MIT License)
 
-**Issue Tracker:** https://github.com/tejasgit/nylo/issues
+**Issue Tracker:** https://github.com/tejasgit/wtx-1/issues
 
 ---
 
@@ -48,7 +48,7 @@ A Proposal of the [Privacy Community Group](https://privacycg.github.io/).
 
 The deprecation of third-party cookies eliminates the most widely used mechanism for cross-domain identity on the web. While this is a significant win for user privacy, it creates a gap for legitimate analytics use cases where site operators need to understand user journeys across domains they own or operate.
 
-WTX-1 (WaiTag Transfer Protocol, version 1) defines a protocol for preserving pseudonymous context across navigations between cooperating, DNS-authorized domains. It achieves this without cookies, fingerprinting, login requirements, or PII collection.
+WTX-1 (WaiTag Transfer Protocol, version 1) defines a protocol for preserving pseudonymous context across navigations between cooperating, DNS-authorized domains. It achieves this without third-party cookies, fingerprinting, login requirements, or PII collection. (A first-party cookie is used only as a local storage fallback for WaiTag persistence on the same domain.)
 
 The protocol is designed to work within existing web platform constraints — it requires no new browser APIs, no browser vendor cooperation, and no changes to HTTP. It operates entirely within current web standards using URL hash fragments, DNS TXT records, and client-side JavaScript.
 
