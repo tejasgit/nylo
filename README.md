@@ -163,6 +163,8 @@ nylo/
 │   ├── demo-server.js             # Self-contained Express demo server
 │   ├── demo-server-sqlite.js      # Demo server with SQLite persistence
 │   ├── storage-sqlite.js          # SQLite reference storage adapter
+│   ├── demo-server-postgres.js    # Demo server with PostgreSQL persistence
+│   ├── storage-postgres.js        # PostgreSQL reference storage adapter
 │   ├── basic.html                 # Minimal client-side integration
 │   └── server.ts                  # TypeScript Express server example
 ├── LICENSE                        # MIT License
