@@ -6,6 +6,21 @@
  */
 
 import type { Request, Response } from "express";
+import crypto from "crypto";
+
+const dedupCache = new Map<string, number>();
+const DEDUP_WINDOW_MS = parseInt(process.env.TRACKING_DEDUP_WINDOW_SECONDS || '60', 10) * 1000;
+
+function cleanupDedupCache() {
+  const now = Date.now();
+  for (const [key, expireAt] of dedupCache.entries()) {
+    if (now > expireAt) {
+      dedupCache.delete(key);
+    }
+  }
+}
+
+setInterval(cleanupDedupCache, 60000).unref();
 
 export interface TrackingStorage {
   createInteraction(data: any): Promise<any>;
@@ -46,6 +61,20 @@ export function registerTrackingRoutes(app: any, storage: TrackingStorage) {
         if (!url && pageUrl) url = pageUrl;
 
         if (!sessionId || !eventType || !domain) continue;
+
+        const eventTimestampStr = timestamp ? String(timestamp) : '';
+        const dedupString = `${sessionId}:${eventType}:${eventTimestampStr}`;
+        const dedupKey = crypto.createHash('sha256').update(dedupString).digest('hex');
+
+        const now = Date.now();
+        if (dedupCache.has(dedupKey)) {
+          const expireAt = dedupCache.get(dedupKey)!;
+          if (now < expireAt) {
+            continue;
+          }
+        }
+
+        dedupCache.set(dedupKey, now + DEDUP_WINDOW_MS);
 
         try {
           await storage.createInteraction({
