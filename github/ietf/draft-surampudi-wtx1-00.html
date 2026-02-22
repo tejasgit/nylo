@@ -2422,25 +2422,91 @@ _nylo-verify.example.com. IN TXT
 <a href="#section-12" class="section-number selfRef">12. </a><a href="#name-privacy-considerations" class="section-name selfRef">Privacy Considerations</a>
       </h2>
 <p id="section-12-1">
-        WTX-1 makes the following privacy commitments:<a href="#section-12-1" class="pilcrow">¶</a></p>
-<ol start="1" type="1" class="normal type-1" id="section-12-2">
-        <li id="section-12-2.1">No PII collection: The protocol never collects, transmits, or derives personal information.<a href="#section-12-2.1" class="pilcrow">¶</a>
-</li>
-        <li id="section-12-2.2">No fingerprinting: No hardware, software, or behavioral signals are used to generate identifiers.<a href="#section-12-2.2" class="pilcrow">¶</a>
-</li>
-        <li id="section-12-2.3">No third-party cookies: Cross-domain identity does not use the Set-Cookie/Cookie HTTP mechanism for cross-domain transfer.<a href="#section-12-2.3" class="pilcrow">¶</a>
-</li>
-        <li id="section-12-2.4">No login required: Identity preservation works for anonymous visitors.<a href="#section-12-2.4" class="pilcrow">¶</a>
-</li>
-        <li id="section-12-2.5">Consent-respecting: The protocol degrades to fully anonymous tracking when consent is denied.<a href="#section-12-2.5" class="pilcrow">¶</a>
-</li>
-        <li id="section-12-2.6">Domain-authorized: Only DNS-verified domains can participate in identity sharing.<a href="#section-12-2.6" class="pilcrow">¶</a>
-</li>
-        <li id="section-12-2.7">Time-limited tokens: Cross-domain tokens expire, preventing indefinite tracking.<a href="#section-12-2.7" class="pilcrow">¶</a>
-</li>
-        <li id="section-12-2.8">Client-side token reading: Hash fragment transport ensures tokens are never sent to destination servers in HTTP requests. The token is subsequently sent to the verification server via a dedicated API call for validation.<a href="#section-12-2.8" class="pilcrow">¶</a>
-</li>
-      </ol>
+        WTX-1 is designed from the ground up to preserve user privacy while
+        enabling cross-domain analytics. This section details the privacy
+        properties, guarantees, and limitations of the protocol.<a href="#section-12-1" class="pilcrow">¶</a></p>
+
+<section id="section-12.1">
+<h3 id="name-core-privacy-commitments">
+<a href="#section-12.1" class="section-number selfRef">12.1. </a><a href="#name-core-privacy-commitments" class="section-name selfRef">Core Privacy Commitments</a>
+</h3>
+<ol start="1" type="1" class="normal type-1">
+<li>No PII collection: The protocol never collects, transmits, or derives personal information such as names, email addresses, phone numbers, or physical addresses.</li>
+<li>No fingerprinting: No hardware, software, or behavioral signals (screen resolution, installed fonts, GPU rendering, etc.) are used to generate or correlate identifiers.</li>
+<li>No third-party cookies: Cross-domain identity does not use the Set-Cookie/Cookie HTTP mechanism for cross-domain transfer.</li>
+<li>No login required: Identity preservation works for anonymous visitors without requiring authentication or account creation.</li>
+<li>Consent-respecting: The protocol degrades to fully anonymous tracking when consent is denied, ensuring compliance with opt-out requirements.</li>
+<li>Domain-authorized: Only DNS-verified domains can participate in identity sharing, preventing unauthorized cross-domain tracking.</li>
+<li>Time-limited tokens: Cross-domain tokens expire (default 5 minutes), preventing indefinite tracking or token reuse.</li>
+<li>Client-side token reading: Hash fragment transport ensures tokens are never sent to destination servers in HTTP requests. The token is subsequently sent to the verification server via a dedicated API call for validation.</li>
+</ol>
+</section>
+
+<section id="section-12.2">
+<h3 id="name-pseudonymous-identifiers">
+<a href="#section-12.2" class="section-number selfRef">12.2. </a><a href="#name-pseudonymous-identifiers" class="section-name selfRef">Pseudonymous Identifiers</a>
+</h3>
+<p>WaiTags are pseudonymous identifiers generated using cryptographically secure random number generators (window.crypto.getRandomValues). They contain no embedded personal information, device characteristics, or derivable real-world identity. A WaiTag cannot be reversed to identify a natural person without access to a separate mapping table, which the protocol does not define or require.</p>
+<p>Under GDPR, pseudonymous identifiers are still considered personal data when they can be attributed to a natural person by using additional information. Implementors MUST ensure that any additional information that could link a WaiTag to a natural person is kept separately and subject to appropriate technical and organizational measures.</p>
+</section>
+
+<section id="section-12.3">
+<h3 id="name-user-control-and-consent">
+<a href="#section-12.3" class="section-number selfRef">12.3. </a><a href="#name-user-control-and-consent" class="section-name selfRef">User Control and Consent</a>
+</h3>
+<p>Implementations SHOULD provide users with clear mechanisms to:</p>
+<ol start="1" type="1" class="normal type-1">
+<li>Opt out of cross-domain identity sharing while retaining single-domain analytics.</li>
+<li>Clear their WaiTag and session data at any time.</li>
+<li>View what data has been collected about their pseudonymous identity.</li>
+<li>Request deletion of all data associated with their WaiTag.</li>
+</ol>
+<p>When a user denies consent, the protocol MUST degrade gracefully to anonymous mode where no cross-domain tokens are generated or accepted, and only aggregate, non-identifiable analytics are collected.</p>
+</section>
+
+<section id="section-12.4">
+<h3 id="name-data-minimization">
+<a href="#section-12.4" class="section-number selfRef">12.4. </a><a href="#name-data-minimization" class="section-name selfRef">Data Minimization</a>
+</h3>
+<p>The protocol follows the principle of data minimization as required by GDPR Article 5(1)(c). Cross-domain tokens contain only the minimum fields necessary for identity verification: a WaiTag, session identifier, optional user identifier, source domain, expiration timestamp, and cryptographic signature. No behavioral data, page content, or interaction history is included in the token.</p>
+</section>
+
+<section id="section-12.5">
+<h3 id="name-cross-domain-tracking-scope">
+<a href="#section-12.5" class="section-number selfRef">12.5. </a><a href="#name-cross-domain-tracking-scope" class="section-name selfRef">Cross-Domain Tracking Scope</a>
+</h3>
+<p>Cross-domain identity sharing is limited to domains that have been explicitly authorized via DNS TXT records. This prevents a domain from being included in a tracking network without the domain owner's explicit consent. The DNS verification mechanism ensures that only organizations with administrative control over a domain can authorize it for cross-domain identity sharing.</p>
+<p>Implementations MUST NOT allow wildcard domain authorization or open enrollment of domains into a tracking network.</p>
+</section>
+
+<section id="section-12.6">
+<h3 id="name-regulatory-compliance">
+<a href="#section-12.6" class="section-number selfRef">12.6. </a><a href="#name-regulatory-compliance" class="section-name selfRef">Regulatory Compliance</a>
+</h3>
+<p>WTX-1 is designed to operate within the following regulatory frameworks:</p>
+<ul>
+<li>GDPR (EU): Pseudonymous processing with data minimization, purpose limitation, and right to erasure support.</li>
+<li>CCPA/CPRA (California): No sale of personal information; supports opt-out mechanisms.</li>
+<li>ePrivacy Directive (EU): No use of cookies or similar technologies for cross-domain transfer; hash fragment transport does not trigger cookie consent requirements.</li>
+<li>HIPAA (US Healthcare): No collection or transmission of Protected Health Information (PHI).</li>
+<li>COPPA (US Children): Protocol does not collect age information; implementors in child-directed services MUST implement additional safeguards.</li>
+</ul>
+<p>Implementors are responsible for ensuring their specific deployment complies with applicable local regulations, as the protocol alone does not guarantee regulatory compliance.</p>
+</section>
+
+<section id="section-12.7">
+<h3 id="name-limitations-and-residual-risks">
+<a href="#section-12.7" class="section-number selfRef">12.7. </a><a href="#name-limitations-and-residual-risks" class="section-name selfRef">Limitations and Residual Risks</a>
+</h3>
+<p>While WTX-1 provides strong privacy guarantees, the following residual risks should be acknowledged:</p>
+<ul>
+<li>Server-side correlation: Organizations operating multiple domains may correlate WaiTags server-side. The protocol limits this to DNS-authorized domains but cannot prevent the authorizing organization from performing correlation.</li>
+<li>Token interception: Although hash fragment transport prevents tokens from being sent in HTTP requests, tokens may be visible to browser extensions or client-side JavaScript on the destination page before cleanup occurs.</li>
+<li>Referrer leakage: Some browsers may include hash fragments in Referer headers under certain conditions. Implementations SHOULD set Referrer-Policy headers to mitigate this risk.</li>
+<li>Long-lived sessions: If WaiTags are stored in localStorage without expiration, they persist indefinitely. Implementations SHOULD implement WaiTag rotation or expiration policies.</li>
+</ul>
+</section>
+
 </section>
 </div>
 <section id="section-13">

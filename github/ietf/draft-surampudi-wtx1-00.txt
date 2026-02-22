@@ -101,7 +101,14 @@ Table of Contents
      10.5.  Response Headers . . . . . . . . . . . . . . . . . . . .  15
    11. IANA Considerations . . . . . . . . . . . . . . . . . . . . .  16
    12. Privacy Considerations  . . . . . . . . . . . . . . . . . . .  16
-   13. References  . . . . . . . . . . . . . . . . . . . . . . . . .  16
+     12.1.  Core Privacy Commitments  . . . . . . . . . . . . . . . .  16
+     12.2.  Pseudonymous Identifiers  . . . . . . . . . . . . . . . .  17
+     12.3.  User Control and Consent  . . . . . . . . . . . . . . . .  18
+     12.4.  Data Minimization . . . . . . . . . . . . . . . . . . . .  18
+     12.5.  Cross-Domain Tracking Scope . . . . . . . . . . . . . . .  19
+     12.6.  Regulatory Compliance . . . . . . . . . . . . . . . . . .  19
+     12.7.  Limitations and Residual Risks  . . . . . . . . . . . . .  20
+   13. References  . . . . . . . . . . . . . . . . . . . . . . . . .  20
      13.1.  Normative References . . . . . . . . . . . . . . . . . .  16
      13.2.  Informative References . . . . . . . . . . . . . . . . .  17
    Comparison with Existing Approaches . . . . . . . . . . . . . . .  18
@@ -858,33 +865,147 @@ Internet-Draft                    WTX-1                    February 2026
 
 12.  Privacy Considerations
 
+   WTX-1 is designed from the ground up to preserve user privacy while
+   enabling cross-domain analytics. This section details the privacy
+   properties, guarantees, and limitations of the protocol.
+
+12.1.  Core Privacy Commitments
+
    WTX-1 makes the following privacy commitments:
 
    1.  No PII collection: The protocol never collects, transmits, or
-       derives personal information.
+       derives personal information such as names, email addresses,
+       phone numbers, or physical addresses.
 
    2.  No fingerprinting: No hardware, software, or behavioral signals
-       are used to generate identifiers.
+       (screen resolution, installed fonts, GPU rendering, etc.) are
+       used to generate or correlate identifiers.
 
    3.  No third-party cookies: Cross-domain identity does not use the
        Set-Cookie/Cookie HTTP mechanism for cross-domain transfer.
 
    4.  No login required: Identity preservation works for anonymous
-       visitors.
+       visitors without requiring authentication or account creation.
 
    5.  Consent-respecting: The protocol degrades to fully anonymous
-       tracking when consent is denied.
+       tracking when consent is denied, ensuring compliance with
+       opt-out requirements.
 
    6.  Domain-authorized: Only DNS-verified domains can participate in
-       identity sharing.
+       identity sharing, preventing unauthorized cross-domain tracking.
 
-   7.  Time-limited tokens: Cross-domain tokens expire, preventing
-       indefinite tracking.
+   7.  Time-limited tokens: Cross-domain tokens expire (default 5
+       minutes), preventing indefinite tracking or token reuse.
 
    8.  Client-side token reading: Hash fragment transport ensures tokens
        are never sent to destination servers in HTTP requests.  The
        token is subsequently sent to the verification server via a
        dedicated API call for validation.
+
+12.2.  Pseudonymous Identifiers
+
+   WaiTags are pseudonymous identifiers generated using cryptographically
+   secure random number generators (window.crypto.getRandomValues). They
+   contain no embedded personal information, device characteristics, or
+   derivable real-world identity. A WaiTag cannot be reversed to identify
+   a natural person without access to a separate mapping table, which the
+   protocol does not define or require.
+
+   Under GDPR, pseudonymous identifiers are still considered personal
+   data when they can be attributed to a natural person by using
+   additional information. Implementors MUST ensure that any additional
+   information that could link a WaiTag to a natural person is kept
+   separately and subject to appropriate technical and organizational
+   measures.
+
+12.3.  User Control and Consent
+
+   Implementations SHOULD provide users with clear mechanisms to:
+
+   1.  Opt out of cross-domain identity sharing while retaining
+       single-domain analytics.
+
+   2.  Clear their WaiTag and session data at any time.
+
+   3.  View what data has been collected about their pseudonymous
+       identity.
+
+   4.  Request deletion of all data associated with their WaiTag.
+
+   When a user denies consent, the protocol MUST degrade gracefully to
+   anonymous mode where no cross-domain tokens are generated or
+   accepted, and only aggregate, non-identifiable analytics are
+   collected.
+
+12.4.  Data Minimization
+
+   The protocol follows the principle of data minimization as required
+   by GDPR Article 5(1)(c). Cross-domain tokens contain only the
+   minimum fields necessary for identity verification: a WaiTag,
+   session identifier, optional user identifier, source domain,
+   expiration timestamp, and cryptographic signature. No behavioral
+   data, page content, or interaction history is included in the token.
+
+12.5.  Cross-Domain Tracking Scope
+
+   Cross-domain identity sharing is limited to domains that have been
+   explicitly authorized via DNS TXT records. This prevents a domain
+   from being included in a tracking network without the domain owner's
+   explicit consent. The DNS verification mechanism ensures that only
+   organizations with administrative control over a domain can authorize
+   it for cross-domain identity sharing.
+
+   Implementations MUST NOT allow wildcard domain authorization or
+   open enrollment of domains into a tracking network.
+
+12.6.  Regulatory Compliance
+
+   WTX-1 is designed to operate within the following regulatory
+   frameworks:
+
+   *  GDPR (EU): Pseudonymous processing with data minimization,
+      purpose limitation, and right to erasure support.
+
+   *  CCPA/CPRA (California): No sale of personal information;
+      supports opt-out mechanisms.
+
+   *  ePrivacy Directive (EU): No use of cookies or similar
+      technologies for cross-domain transfer; hash fragment transport
+      does not trigger cookie consent requirements.
+
+   *  HIPAA (US Healthcare): No collection or transmission of
+      Protected Health Information (PHI).
+
+   *  COPPA (US Children): Protocol does not collect age information;
+      implementors in child-directed services MUST implement additional
+      safeguards.
+
+   Implementors are responsible for ensuring their specific deployment
+   complies with applicable local regulations, as the protocol alone
+   does not guarantee regulatory compliance.
+
+12.7.  Limitations and Residual Risks
+
+   While WTX-1 provides strong privacy guarantees, the following
+   residual risks should be acknowledged:
+
+   *  Server-side correlation: Organizations operating multiple domains
+      may correlate WaiTags server-side. The protocol limits this to
+      DNS-authorized domains but cannot prevent the authorizing
+      organization from performing correlation.
+
+   *  Token interception: Although hash fragment transport prevents
+      tokens from being sent in HTTP requests, tokens may be visible
+      to browser extensions or client-side JavaScript on the
+      destination page before cleanup occurs.
+
+   *  Referrer leakage: Some browsers may include hash fragments in
+      Referer headers under certain conditions. Implementations SHOULD
+      set Referrer-Policy headers to mitigate this risk.
+
+   *  Long-lived sessions: If WaiTags are stored in localStorage
+      without expiration, they persist indefinitely. Implementations
+      SHOULD implement WaiTag rotation or expiration policies.
 
 13.  References
 
