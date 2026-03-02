@@ -129,7 +129,7 @@ Zero dependencies in the client SDK. Works in all modern browsers.
 
 - **GitHub (SDK):** [github.com/tejasgit/nylo](https://github.com/tejasgit/nylo) — MIT license
 - **GitHub (Protocol):** [github.com/tejasgit/wtx-1](https://github.com/tejasgit/wtx-1) — CC BY 4.0
-- **IETF Draft:** [draft-surampudi-wtx1-00](https://datatracker.ietf.org/doc/draft-surampudi-wtx1/)
+- **IETF Draft:** [draft-surampudi-wtx1-01](https://datatracker.ietf.org/doc/draft-surampudi-wtx1/)
 - **W3C Privacy CG:** proposal submitted for community review
 
 ---

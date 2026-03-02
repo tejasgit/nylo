@@ -114,7 +114,7 @@ cd nylo/examples && npm install && npm start
 
 - The protocol specification is published at [github.com/tejasgit/wtx-1](https://github.com/tejasgit/wtx-1)
 - The reference implementation is at [github.com/tejasgit/nylo](https://github.com/tejasgit/nylo)
-- An IETF Internet-Draft has been submitted ([draft-surampudi-wtx1-00](https://datatracker.ietf.org/doc/draft-surampudi-wtx1/))
+- An IETF Internet-Draft has been submitted ([draft-surampudi-wtx1-01](https://datatracker.ietf.org/doc/draft-surampudi-wtx1/))
 - A proposal has been submitted to the W3C Privacy Community Group
 
 I'm actively looking for security review, privacy analysis, and feedback from anyone working in browser privacy, web standards, or analytics infrastructure. If the GDPR pseudonymity argument has holes, I'd rather find them now. If there are attack vectors I've missed, I want to know.

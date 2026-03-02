@@ -1,0 +1,2069 @@
+
+
+
+
+
+Independent Submission                                   R. T. Surampudi
+Internet-Draft                                              Nylo Project
+Intended status: Informational                             2 March 2026
+Expires: 2 September 2026
+
+
+           WTX-1: Cross-Domain Context Preservation Protocol
+                        draft-surampudi-wtx1-01
+
+Abstract
+
+   This document defines the WTX-1 (WaiTag Transfer Protocol,
+   version 1) for preserving pseudonymous user context across unrelated
+   web domains without third-party cookies, browser fingerprinting,
+   login requirements, or personal data collection.  The protocol uses
+   cryptographically generated pseudonymous identifiers (WaiTags), URL
+   hash fragment transport with early-cleanup scripts, server-side
+   verification with replay protection, and DNS-based domain
+   authorization to enable privacy-respecting cross-domain analytics.
+
+   This revision (draft-01) adds early-cleanup script specification,
+   replay protection with nonce tracking, a complete threat model with
+   browser extension analysis, measurable security properties with
+   quantifiable claims, and expanded privacy considerations.  The
+   document is positioned as a research contribution on privacy-
+   preserving cross-domain identity relevant to the IRTF Privacy
+   Enhancements and Assessments Research Group (PEARG).
+
+Status of This Memo
+
+   This Internet-Draft is submitted in full conformance with the
+   provisions of BCP 78 and BCP 79.
+
+   Internet-Drafts are working documents of the Internet Engineering
+   Task Force (IETF).  Note that other groups may also distribute
+   working documents as Internet-Drafts.  The list of current Internet-
+   Drafts is at https://datatracker.ietf.org/drafts/current/.
+
+   Internet-Drafts are draft documents valid for a maximum of six months
+   and may be updated, replaced, or obsoleted by other documents at any
+   time.  It is inappropriate to use Internet-Drafts as reference
+   material or to cite them other than as "work in progress."
+
+   This Internet-Draft will expire on 2 September 2026.
+
+Copyright Notice
+
+   Copyright (c) 2026 IETF Trust and the persons identified as the
+   document authors.  All rights reserved.
+
+   This document is subject to BCP 78 and the IETF Trust's Legal
+   Provisions Relating to IETF Documents (https://trustee.ietf.org/
+   license-info) in effect on the date of publication of this document.
+   Please review these documents carefully, as they describe your rights
+   and restrictions with respect to this document.
+
+
+
+Surampudi               Expires 2 September 2026                [Page 1]
+
+Internet-Draft                    WTX-1                       March 2026
+
+
+Table of Contents
+
+   1.  Introduction  . . . . . . . . . . . . . . . . . . . . . . . .   3
+     1.1.  Requirements Language . . . . . . . . . . . . . . . . . .   4
+     1.2.  Changes from draft-00 . . . . . . . . . . . . . . . . . .   4
+   2.  Terminology . . . . . . . . . . . . . . . . . . . . . . . . .   5
+   3.  Protocol Overview . . . . . . . . . . . . . . . . . . . . . .   6
+     3.1.  Step-by-Step  . . . . . . . . . . . . . . . . . . . . . .   7
+   4.  WaiTag Format . . . . . . . . . . . . . . . . . . . . . . . .   8
+     4.1.  Structure . . . . . . . . . . . . . . . . . . . . . . . .   8
+     4.2.  Properties  . . . . . . . . . . . . . . . . . . . . . . .   9
+     4.3.  Generation Requirements . . . . . . . . . . . . . . . . .   9
+   5.  Token Transport . . . . . . . . . . . . . . . . . . . . . . .  10
+     5.1.  Primary: URL Hash Fragment  . . . . . . . . . . . . . . .  10
+     5.2.  Early-Cleanup Script  . . . . . . . . . . . . . . . . . .  10
+     5.3.  Opt-In Fallback: URL Query Parameters . . . . . . . . . .  13
+     5.4.  Parameter Names . . . . . . . . . . . . . . . . . . . . .  13
+     5.5.  Token Cleanup . . . . . . . . . . . . . . . . . . . . . .  14
+   6.  Token Format and Verification . . . . . . . . . . . . . . . .  14
+     6.1.  Token Contents  . . . . . . . . . . . . . . . . . . . . .  14
+     6.2.  Replay Protection . . . . . . . . . . . . . . . . . . . .  15
+     6.3.  Verification Requirements . . . . . . . . . . . . . . . .  16
+     6.4.  Verification Endpoint . . . . . . . . . . . . . . . . . .  16
+   7.  DNS Domain Authorization  . . . . . . . . . . . . . . . . . .  17
+     7.1.  Purpose . . . . . . . . . . . . . . . . . . . . . . . . .  17
+     7.2.  TXT Record Format . . . . . . . . . . . . . . . . . . . .  17
+     7.3.  Verification Flow . . . . . . . . . . . . . . . . . . . .  18
+     7.4.  Subdomain Inheritance . . . . . . . . . . . . . . . . . .  18
+   8.  Client-Side Storage . . . . . . . . . . . . . . . . . . . . .  18
+     8.1.  Three-Layer Strategy  . . . . . . . . . . . . . . . . . .  18
+     8.2.  Storage Read Priority . . . . . . . . . . . . . . . . . .  19
+     8.3.  Data Stored . . . . . . . . . . . . . . . . . . . . . . .  19
+     8.4.  Data Obfuscation  . . . . . . . . . . . . . . . . . . . .  19
+   9.  Threat Model and Mitigations  . . . . . . . . . . . . . . . .  20
+     9.1.  Token Replay Attacks  . . . . . . . . . . . . . . . . . .  20
+     9.2.  Token Interception  . . . . . . . . . . . . . . . . . . .  20
+     9.3.  Browser Extension Limitations . . . . . . . . . . . . . .  21
+     9.4.  HTTPS Requirement . . . . . . . . . . . . . . . . . . . .  21
+     9.5.  Cross-Site Scripting (XSS)  . . . . . . . . . . . . . . .  22
+     9.6.  DNS Spoofing  . . . . . . . . . . . . . . . . . . . . . .  22
+     9.7.  Server-Side Key Management  . . . . . . . . . . . . . . .  22
+     9.8.  Rate Limiting . . . . . . . . . . . . . . . . . . . . . .  22
+   10. Consent and Anonymous Mode  . . . . . . . . . . . . . . . . .  23
+     10.1.  Consent API  . . . . . . . . . . . . . . . . . . . . . .  23
+     10.2.  Anonymous Mode Behavior  . . . . . . . . . . . . . . . .  23
+     10.3.  Consent Restoration  . . . . . . . . . . . . . . . . . .  24
+     10.4.  Regulatory Considerations  . . . . . . . . . . . . . . .  24
+   11. Security Considerations . . . . . . . . . . . . . . . . . . .  24
+     11.1.  Token Security . . . . . . . . . . . . . . . . . . . . .  25
+     11.2.  Transport Security . . . . . . . . . . . . . . . . . . .  25
+     11.3.  Input Validation . . . . . . . . . . . . . . . . . . . .  25
+     11.4.  Rate Limiting  . . . . . . . . . . . . . . . . . . . . .  26
+     11.5.  Response Headers . . . . . . . . . . . . . . . . . . . .  26
+   12. IANA Considerations . . . . . . . . . . . . . . . . . . . . .  26
+   13. Privacy Considerations  . . . . . . . . . . . . . . . . . . .  27
+     13.1.  Core Privacy Commitments . . . . . . . . . . . . . . . .  27
+     13.2.  Pseudonymous Identifiers and GDPR  . . . . . . . . . . .  28
+     13.3.  User Control and Consent . . . . . . . . . . . . . . . .  28
+     13.4.  Data Minimization  . . . . . . . . . . . . . . . . . . .  29
+     13.5.  Cross-Domain Tracking Scope  . . . . . . . . . . . . . .  29
+     13.6.  Consent-Gated Degradation  . . . . . . . . . . . . . . .  29
+     13.7.  Identifier Rotation  . . . . . . . . . . . . . . . . . .  30
+     13.8.  Regulatory Compliance  . . . . . . . . . . . . . . . . .  30
+     13.9.  Limitations and Residual Risks . . . . . . . . . . . . .  30
+     13.10. Research Questions for Privacy Analysis  . . . . . . . .  31
+   14. Measurable Security Properties  . . . . . . . . . . . . . . .  31
+     14.1.  Logging Surface Reduction  . . . . . . . . . . . . . . .  32
+     14.2.  Token Visibility Window  . . . . . . . . . . . . . . . .  33
+     14.3.  Token Entropy  . . . . . . . . . . . . . . . . . . . . .  33
+     14.4.  Token Lifetime and Replay Surface  . . . . . . . . . . .  34
+     14.5.  Token Verification Latency . . . . . . . . . . . . . . .  35
+     14.6.  HTTP Data Leakage  . . . . . . . . . . . . . . . . . . .  35
+   15. References  . . . . . . . . . . . . . . . . . . . . . . . . .  36
+     15.1.  Normative References . . . . . . . . . . . . . . . . . .  36
+     15.2.  Informative References . . . . . . . . . . . . . . . . .  37
+   Comparison with Existing Approaches . . . . . . . . . . . . . . .  37
+   Acknowledgments . . . . . . . . . . . . . . . . . . . . . . . . .  38
+   Author's Address  . . . . . . . . . . . . . . . . . . . . . . . .  38
+
+
+
+Surampudi               Expires 2 September 2026                [Page 2]
+
+Internet-Draft                    WTX-1                       March 2026
+
+
+1.  Introduction
+
+   Third-party cookies have been the primary mechanism for cross-domain
+   user identification since the 1990s.  With Safari's Intelligent
+   Tracking Prevention (ITP [ITP]) deployed in 2017, Firefox Enhanced
+   Tracking Protection (ETP) in 2019, and Chrome's Privacy Sandbox
+   initiative beginning in 2024, this mechanism is being eliminated
+   across all major browsers.
+
+   When a user navigates from one domain to an unrelated domain
+   (different effective top-level domain plus one label, or eTLD+1),
+   analytics systems lose the ability to understand that the same
+   visitor made both visits.  This creates blind spots in patient
+   journey analytics across healthcare providers, financial customer
+   experience across banking portals, government service usage across
+   agency domains, and multi-brand retail analytics.
+
+   Existing solutions have significant limitations: browser
+   fingerprinting is ethically problematic and legally risky; login-
+   based identity excludes anonymous visitors; first-party data sharing
+   requires business partnerships and PII exchange; Privacy Sandbox
+   Topics API is coarse-grained, advertising-focused, and Chrome-only.
+
+   WTX-1 addresses these limitations by defining a protocol that:
+
+   1.  Preserves visitor context across unrelated domains
+
+   2.  Never collects, transmits, or derives personal information
+
+   3.  Works without cookies, fingerprinting, or login
+
+   4.  Resists tracking by unauthorized third parties via DNS-based
+       domain authorization
+
+   5.  Degrades gracefully when consent is denied
+
+   6.  Operates within GDPR, CCPA, and ePrivacy frameworks
+
+   This document presents WTX-1 as a research contribution to the
+   study of privacy-preserving cross-domain identity mechanisms.  The
+   protocol is relevant to the IRTF Privacy Enhancements and
+   Assessments Research Group (PEARG), whose charter includes "privacy
+   analysis of proposed and deployed technologies."  WTX-1 provides
+   measurable security properties (Section 14) that can be independently
+   verified, enabling rigorous privacy analysis by the research
+   community.
+
+
+
+
+Surampudi               Expires 2 September 2026                [Page 3]
+
+Internet-Draft                    WTX-1                       March 2026
+
+
+1.1.  Requirements Language
+
+   The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT",
+   "SHOULD", "SHOULD NOT", "RECOMMENDED", "NOT RECOMMENDED", "MAY", and
+   "OPTIONAL" in this document are to be interpreted as described in BCP
+   14 [RFC2119] [RFC8174] when, and only when, they appear in all
+   capitals, as shown here.
+
+1.2.  Changes from draft-00
+
+   This revision includes the following changes:
+
+   *  Added early-cleanup script specification (Section 5.2)
+
+   *  Changed query parameter transport to opt-in only (Section 5.3)
+
+   *  Added replay protection as a MUST requirement (Section 6.2)
+
+   *  Added nonce field to token format for replay protection
+
+   *  Added complete threat model and mitigations (Section 9)
+
+   *  Added browser extension limitation analysis (Section 9.3)
+
+   *  Added measurable security properties (Section 14)
+
+   *  Expanded privacy considerations (Section 13)
+
+   *  Added PEARG-relevant framing for research community engagement
+
+   *  Added Performance API and PEARG charter references
+
+   *  Updated WaiTag entropy from 64 bits to 128 bits
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Surampudi               Expires 2 September 2026                [Page 4]
+
+Internet-Draft                    WTX-1                       March 2026
+
+
+2.  Terminology
+
+   WaiTag  A pseudonymous identifier generated per-visitor using
+      cryptographic randomness.  Format:
+      wai_<random>_<domain_hash>.  Contains no personally
+      identifiable information (PII).
+
+   Origin Domain  The domain where the user's session begins and the
+      WaiTag is generated.
+
+   Destination Domain  The domain the user navigates to, which receives
+      and verifies the WaiTag via a cross-domain token.
+
+   Cross-Domain Token  A time-limited, server-signed token encoding the
+      WaiTag for transfer between domains.
+
+   DNS Authorization  Domain ownership verification via DNS TXT records
+      that authorizes a domain to participate in WTX-1 identity sharing.
+
+   Verification Server  The server-side component that issues, signs,
+      and verifies cross-domain tokens.
+
+   Anonymous Mode  A degraded operating mode where no WaiTag is
+      generated, no identity is preserved, and identity-related API
+      calls are no-ops.
+
+   Early-Cleanup Script  An inline <head> script that strips tokens
+      from the URL before any other scripts execute, minimizing the
+      token visibility window.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Surampudi               Expires 2 September 2026                [Page 5]
+
+Internet-Draft                    WTX-1                       March 2026
+
+
+3.  Protocol Overview
+
+   The WTX-1 protocol operates across three participants: the origin
+   domain, the destination domain, and the verification server.
+
+     Domain A            Verification           Domain B
+     (Origin)              Server             (Destination)
+        |                    |                      |
+     1. User visits          |                      |
+     2. Generate WaiTag      |                      |
+     3. Register WaiTag ---->|                      |
+        |              4. Store WaiTag              |
+        |                    |                      |
+     5. User clicks link     |                      |
+        to Domain B          |                      |
+     6. Request token ------>|                      |
+        |              7. Verify DNS                |
+        |                 authorization             |
+        |<--------- 8. Return signed token          |
+        |                    |                      |
+     9. Append token to      |                      |
+        URL hash fragment    |                      |
+        |                    |                      |
+        |--- User navigates to Domain B ----------->|
+        |                    |                      |
+        |                    |   10. Early-cleanup   |
+        |                    |       script strips   |
+        |                    |       token from URL  |
+        |                    |                      |
+        |                    |   11. SDK reads token |
+        |                    |       from stashed var|
+        |                    |<---- 12. Verify token |
+        |                    |                      |
+        |              13. Check signature,         |
+        |                  expiry, domain,          |
+        |                  replay (nonce)           |
+        |                    |                      |
+        |                    |----> 14. Return       |
+        |                    |      identity         |
+        |                    |                      |
+        |                    |  15. Restore WaiTag   |
+        |                    |      Clean URL        |
+
+                       Figure 1: WTX-1 Protocol Flow
+
+
+
+
+Surampudi               Expires 2 September 2026                [Page 6]
+
+Internet-Draft                    WTX-1                       March 2026
+
+
+3.1.  Step-by-Step
+
+   1.  *WaiTag Generation:* When a user first visits a participating
+       domain, the client generates a WaiTag using the Web Crypto API
+       (crypto.getRandomValues).  The WaiTag format is
+       wai_<random_id><domain_hash>.
+
+   2.  *Identity Registration:* The client registers the WaiTag with the
+       verification server.  The server stores the WaiTag, session ID,
+       originating domain, and timestamp.
+
+   3.  *Cross-Domain Navigation:* When the user navigates to another
+       participating domain, a cross-domain token is appended to the
+       destination URL.  The mechanism for link decoration is
+       implementation-defined (e.g., server-side link rewriting, client-
+       side click handlers, or manual URL construction).
+
+   4.  *Token Generation:* The verification server generates a signed,
+       time-limited token encoding the user's WaiTag and session
+       context.  The server SHOULD verify that the destination domain is
+       DNS-authorized before issuing the token.
+
+   5.  *Hash Fragment Transport:* The token is appended to the
+       destination URL as a hash fragment (#nylo_token=<token>).  Hash
+       fragments are never sent to the server in HTTP requests,
+       providing an additional privacy layer.
+
+   6.  *Early Cleanup:* On the destination domain, an inline <head>
+       script executes before any other scripts, reads the token from
+       the hash fragment, stashes it in a short-lived JavaScript
+       variable (window.__nylo_early_token), and immediately cleans the
+       URL using history.replaceState().  This ensures the token is
+       never visible to third-party page scripts.
+
+   7.  *Token Verification:* The SDK reads the token from the stashed
+       variable (or from the hash fragment as fallback if the early-
+       cleanup script is not deployed), and sends it to the verification
+       server for validation.
+
+   8.  *Identity Restoration:* If verification succeeds (signature
+       valid, not expired, domain authorized, not previously used), the
+       server returns the original WaiTag and session context.  The
+       client restores the user's pseudonymous identity on the new
+       domain.
+
+
+
+
+Surampudi               Expires 2 September 2026                [Page 7]
+
+Internet-Draft                    WTX-1                       March 2026
+
+
+4.  WaiTag Format
+
+4.1.  Structure
+
+   A WaiTag has the following structure:
+
+   wai_<random>_<domain_hash>
+
+   +===========+==========+==========+==============================+
+   | Component | Encoding | Length   | Source                       |
+   +===========+==========+==========+==============================+
+   | Prefix    | ASCII    | 4 chars  | Literal "wai_"               |
+   +-----------+----------+----------+------------------------------+
+   | Random ID | Base-36  | 19 chars | crypto.getRandomValues (16   |
+   |           |          |          | bytes), encoded to base-36   |
+   +-----------+----------+----------+------------------------------+
+   | Separator | ASCII    | 1 char   | Literal "_"                  |
+   +-----------+----------+----------+------------------------------+
+   | Domain    | Hex      | up to    | One-way hash of hostname     |
+   | Hash      |          | 8 chars  |                              |
+   +-----------+----------+----------+------------------------------+
+
+                        Table 1: WaiTag Components
+
+   The random component provides 128 bits of cryptographic entropy
+   (16 bytes from the Web Crypto API), encoded in base-36 for
+   compactness.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Surampudi               Expires 2 September 2026                [Page 8]
+
+Internet-Draft                    WTX-1                       March 2026
+
+
+4.2.  Properties
+
+   A WaiTag has the following properties:
+
+   *  Not reversible: No component can be reversed to identify a
+      natural person.
+
+   *  Not derived from PII: No personal information is used as input.
+
+   *  Domain-scoped: The domain hash binds the WaiTag to its origin,
+      but the hash is one-way and cannot reveal the domain to a third
+      party.
+
+   *  Collision-resistant: 128 bits of cryptographic randomness provides
+      sufficient uniqueness for analytics use cases.  For 1 billion
+      identifiers, the collision probability is approximately
+      1.47 x 10^-21.
+
+   *  Not a fingerprint: No hardware, software, or behavioral signals
+      are used.
+
+   *  Not deterministic: The same user on the same device will receive
+      different WaiTags across sessions unless identity is explicitly
+      restored via cross-domain token.
+
+4.3.  Generation Requirements
+
+   Implementations MUST generate WaiTags using crypto.getRandomValues
+   [W3C-WebCryptoAPI] or an equivalent cryptographically secure
+   pseudorandom number generator (CSPRNG).  If the Web Crypto API is
+   not available, implementations MAY fall back to Math.random, but
+   SHOULD log a warning indicating reduced randomness quality.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Surampudi               Expires 2 September 2026                [Page 9]
+
+Internet-Draft                    WTX-1                       March 2026
+
+
+5.  Token Transport
+
+5.1.  Primary: URL Hash Fragment
+
+   The cross-domain token MUST be transported via URL hash fragment as
+   the primary mechanism:
+
+   https://destination.example.com/page#nylo_token=<signed_token>
+
+   Hash fragments (the portion of a URL after "#") are processed
+   entirely client-side per [RFC3986] Section 3.5.  They are:
+
+   *  Never included in HTTP requests to the server
+
+   *  Never logged in server access logs
+
+   *  Never sent in the Referer header
+
+   *  Not visible to network intermediaries (proxies, CDNs, WAFs)
+
+   This provides a stronger privacy guarantee than URL query parameters,
+   which are transmitted to the server and commonly logged.
+
+5.2.  Early-Cleanup Script
+
+   To minimize the token visibility window, implementations SHOULD
+   deploy an inline early-cleanup script in the <head> of every
+   destination page.  This script MUST execute before any other scripts
+   (including third-party analytics, tag managers, and ad scripts).
+
+   Behavior:
+
+   1.  The script reads the URL hash fragment.
+
+   2.  If a nylo_token or wai_token parameter is present, the script
+       extracts the token value.
+
+   3.  The token is stored in a short-lived JavaScript variable
+       (window.__nylo_early_token).
+
+   4.  Timing data is captured via performance.now() and stored in
+       window.__nylo_early_token_timing.
+
+   5.  The token is immediately removed from the URL using
+       history.replaceState().
+
+   6.  Any remaining non-token hash parameters are preserved.
+
+
+
+Surampudi               Expires 2 September 2026               [Page 10]
+
+Internet-Draft                    WTX-1                       March 2026
+
+
+   Reference implementation:
+
+   <script>
+   (function(){
+     try{
+       var s=performance.now();
+       var h=window.location.hash;
+       if(h&&(h.indexOf("nylo_token=")>-1
+              ||h.indexOf("wai_token=")>-1)){
+         var p=new URLSearchParams(h.substring(1));
+         var t=p.get("nylo_token")||p.get("wai_token");
+         if(t){
+           window.__nylo_early_token=t;
+           p.delete("nylo_token");p.delete("wai_token");
+           var n=p.toString();
+           history.replaceState(null,"",
+             window.location.pathname
+             +window.location.search+(n?"#"+n:""));
+           var e=performance.now();
+           window.__nylo_early_token_timing={
+             start:s,cleaned:e,duration:e-s
+           };
+         }
+       }
+     }catch(e){}
+   })();
+   </script>
+
+   Placement requirements:
+
+   *  MUST be placed inline in the <head> element.
+
+   *  MUST appear before any <script src="..."> tags (including
+      analytics, tag managers, and the SDK itself).
+
+   *  MUST NOT be loaded asynchronously or deferred.
+
+   *  SHOULD be the first <script> element in the document.
+
+
+
+
+
+
+
+
+
+
+
+
+Surampudi               Expires 2 September 2026               [Page 11]
+
+Internet-Draft                    WTX-1                       March 2026
+
+
+   Without the early-cleanup script, the token remains in the URL hash
+   from the moment the page starts loading until the SDK initializes
+   and cleans it.  During this window, any JavaScript on the page --
+   including third-party scripts -- can read window.location.hash and
+   see the token.  The early-cleanup script removes the token from the
+   URL before other scripts execute.
+
+   The early-cleanup script stashes the token in
+   window.__nylo_early_token, which is a globally accessible JavaScript
+   variable.  Any script that runs after the early-cleanup script and
+   knows this variable name can read the token.  This is a deliberate
+   trade-off: the token must be stored somewhere between early-cleanup
+   and SDK initialization.  However, this is significantly more secure
+   than leaving the token in the URL hash because window.location.hash
+   is a well-known, commonly inspected property, while
+   window.__nylo_early_token is an implementation-specific variable that
+   third-party scripts have no reason to look for.  The SDK deletes
+   this variable immediately upon consuming it.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Surampudi               Expires 2 September 2026               [Page 12]
+
+Internet-Draft                    WTX-1                       March 2026
+
+
+5.3.  Opt-In Fallback: URL Query Parameters
+
+   Query parameter token transport is disabled by default.  If hash
+   fragment transport is not feasible (e.g., the destination URL uses
+   hash-based client-side routing that would conflict with the token),
+   the implementation MAY explicitly opt in to search parameter
+   transport:
+
+   https://destination.example.com/page?nylo_token=<signed_token>
+
+   Privacy implications of query parameter transport:
+
+   *  Query parameters ARE included in HTTP requests to the destination
+      server.
+
+   *  Query parameters ARE logged in server access logs by default.
+
+   *  Query parameters MAY appear in Referer headers sent to third
+      parties.
+
+   *  Query parameters ARE visible to network intermediaries.
+
+   Implementations using query parameter transport MUST remove the
+   token from the URL immediately after reading it, using the History
+   API (history.replaceState) to clean the URL without triggering a
+   page reload.  Implementations SHOULD also implement server-side log
+   redaction and configure Referrer-Policy: no-referrer or same-origin
+   headers.
+
+5.4.  Parameter Names
+
+   Implementations MUST accept both of the following parameter names for
+   cross-domain tokens:
+
+   *  "nylo_token" (primary)
+
+   *  "wai_token" (legacy/alternative)
+
+
+
+
+
+
+
+
+
+
+
+
+Surampudi               Expires 2 September 2026               [Page 13]
+
+Internet-Draft                    WTX-1                       March 2026
+
+
+5.5.  Token Cleanup
+
+   Token cleanup operates in two phases:
+
+   Phase 1 (Early Cleanup, recommended): The inline <head> early-
+   cleanup script (Section 5.2) strips the token from the URL hash
+   fragment before any other scripts execute.  The token is stashed in
+   window.__nylo_early_token for the SDK to consume.
+
+   Phase 2 (SDK Cleanup, fallback): If the early-cleanup script is not
+   deployed, the SDK MUST remove the token from the URL when it
+   initializes.  This cleanup occurs later in the page lifecycle, so a
+   brief visibility window exists between page load and SDK
+   initialization.
+
+   After reading a cross-domain token from the URL, the client MUST
+   remove it from the URL to prevent:
+
+   *  Accidental sharing of token-bearing URLs
+
+   *  Token replay from browser history
+
+   *  Token exposure in analytics tools that capture full URLs
+
+   The client SHOULD use history.replaceState to remove the token
+   without causing a navigation event or page reload.
+
+6.  Token Format and Verification
+
+6.1.  Token Contents
+
+   A cross-domain token encodes the following fields:
+
+   +===================+===============================================+
+   | Field             | Description                                   |
+   +===================+===============================================+
+   | waiTag            | The pseudonymous identifier to transfer       |
+   +-------------------+-----------------------------------------------+
+   | sessionId         | The session identifier from the origin        |
+   |                   | domain                                        |
+   +-------------------+-----------------------------------------------+
+   | originDomain      | The domain that issued the token              |
+   +-------------------+-----------------------------------------------+
+   | destinationDomain | The intended recipient domain                 |
+   +-------------------+-----------------------------------------------+
+   | issuedAt          | UTC timestamp of token creation               |
+   +-------------------+-----------------------------------------------+
+   | expiresAt         | UTC timestamp of token expiry                 |
+   +-------------------+-----------------------------------------------+
+   | nonce             | Unique random value for replay protection     |
+   +-------------------+-----------------------------------------------+
+   | signature         | Server-generated signature (HMAC or           |
+   |                   | implementation-defined)                       |
+   +-------------------+-----------------------------------------------+
+
+                     Table 2: Cross-Domain Token Fields
+
+
+
+Surampudi               Expires 2 September 2026               [Page 14]
+
+Internet-Draft                    WTX-1                       March 2026
+
+
+   The token encoding format is implementation-defined.  Common choices
+   include JSON Web Tokens (JWT) [RFC7519] and opaque server-side
+   tokens with a lookup key.
+
+6.2.  Replay Protection
+
+   Each cross-domain token MUST include a unique nonce value generated
+   using a CSPRNG.  The verification server MUST track used nonces and
+   reject any token whose nonce has been previously seen.
+
+   Nonce requirements:
+
+   *  MUST be cryptographically random (minimum 128 bits)
+
+   *  MUST be unique per token
+
+   *  MUST be checked server-side before accepting a token
+
+   Server-side nonce tracking:
+
+   *  The server MUST maintain a store of used nonces
+
+   *  Nonces MUST be retained for at least the token lifetime
+      (default: 300 seconds)
+
+   *  Nonces MAY be purged after the token expiry window has passed
+
+   *  The nonce store MUST be shared across all verification server
+      instances in a cluster
+
+   Replay attempt handling:
+
+   *  First verification of a nonce: Accept and mark as used
+
+   *  Subsequent verification of the same nonce: Reject with
+      TOKEN_REPLAYED error
+
+   *  The server SHOULD log replay attempts for security monitoring
+
+
+
+
+
+
+
+
+
+
+
+
+Surampudi               Expires 2 September 2026               [Page 15]
+
+Internet-Draft                    WTX-1                       March 2026
+
+
+6.3.  Verification Requirements
+
+   The verification server MUST check:
+
+   1.  Signature validity: The token has not been tampered with.
+
+   2.  Expiry: The token has not expired.  The expiry window is
+       configurable; the recommended default is 5 minutes.
+
+   3.  Replay: The token's nonce has not been previously used.
+
+   The verification server SHOULD also check:
+
+   1.  Domain authorization: The destination domain is DNS-authorized
+       to receive identities.
+
+   2.  Origin matching: The token was issued for the domain making the
+       verification request.
+
+6.4.  Verification Endpoint
+
+   The verification endpoint accepts a POST request with Content-Type
+   application/json containing the token, the requesting domain, a
+   customer identifier, and the HTTP Referer value.
+
+   Request body:
+
+   {
+     "token": "<signed_token>",
+     "domain": "destination.example.com",
+     "customerId": "<customer_id>",
+     "referrer": "https://origin.example.com/page"
+   }
+
+   Success response:
+
+   {
+     "success": true,
+     "identity": {
+       "sessionId": "<session_id>",
+       "waiTag": "<wai_tag>",
+       "userId": null
+     }
+   }
+
+
+
+
+Surampudi               Expires 2 September 2026               [Page 16]
+
+Internet-Draft                    WTX-1                       March 2026
+
+
+   Failure responses:
+
+   {
+     "success": false,
+     "error": "TOKEN_EXPIRED"
+   }
+
+   {
+     "success": false,
+     "error": "TOKEN_REPLAYED"
+   }
+
+7.  DNS Domain Authorization
+
+7.1.  Purpose
+
+   Before a domain can receive cross-domain identities, it SHOULD prove
+   ownership via a DNS TXT record.  This prevents unauthorized domains
+   from requesting or receiving WaiTags and ensures that only domains
+   controlled by the same organization (or participating partners) can
+   share visitor context.
+
+7.2.  TXT Record Format
+
+   The DNS TXT record uses the following format:
+
+   _nylo-verify.example.com. IN TXT
+       "nylo-domain-verify=<verification_code>"
+
+   The verification code is a unique value generated by the verification
+   server for each domain registration.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Surampudi               Expires 2 September 2026               [Page 17]
+
+Internet-Draft                    WTX-1                       March 2026
+
+
+7.3.  Verification Flow
+
+   1.  The domain owner registers the domain with the verification
+       server and receives a verification code.
+
+   2.  The domain owner adds the TXT record to their DNS configuration.
+
+   3.  The domain owner calls the verification endpoint.
+
+   4.  The server performs a DNS lookup for _nylo-verify.<domain>.
+
+   5.  If the TXT record matches the expected verification code, the
+       domain is authorized.
+
+   6.  Authorization is cached server-side and periodically re-verified.
+
+7.4.  Subdomain Inheritance
+
+   If a parent domain (e.g., example.com) is DNS-verified, subdomains
+   (e.g., blog.example.com, shop.example.com) inherit authorization
+   automatically.  Implementations MAY provide configuration to exclude
+   specific subdomains.
+
+8.  Client-Side Storage
+
+8.1.  Three-Layer Strategy
+
+   The client SHOULD store identity data using multiple mechanisms for
+   resilience against browser storage restrictions:
+
+   +=======+====================+========================+=============+
+   | Layer | Mechanism          | Persistence            | ITP Impact  |
+   +=======+====================+========================+=============+
+   | 1     | First-party cookie | 24h (JS-set            | Capped at 7 |
+   |       |                    | under ITP)             | days        |
+   +-------+--------------------+------------------------+-------------+
+   | 2     | localStorage       | Until                  | Partitioned |
+   |       |                    | cleared                | by eTLD+1   |
+   +-------+--------------------+------------------------+-------------+
+   | 3     | sessionStorage     | Tab                    | Unaffected  |
+   |       |                    | lifetime               |             |
+   +-------+--------------------+------------------------+-------------+
+
+                          Table 3: Storage Layers
+
+
+
+
+Surampudi               Expires 2 September 2026               [Page 18]
+
+Internet-Draft                    WTX-1                       March 2026
+
+
+8.2.  Storage Read Priority
+
+   When restoring identity, the client reads in order: cookie,
+   localStorage, sessionStorage.  The first valid result is used.
+
+8.3.  Data Stored
+
+   The stored identity record contains:
+
+   {
+     "sessionId": "<secure_id>",
+     "waiTag": "<wai_tag>",
+     "userId": null,
+     "domain": "example.com",
+     "createdAt": "2026-02-20T12:00:00.000Z",
+     "integrity": "<hash>"
+   }
+
+   The "integrity" field is a one-way hash of the session ID, domain,
+   WaiTag, and customer ID, used to detect tampering.
+
+8.4.  Data Obfuscation
+
+   Data stored in localStorage SHOULD be encoded with a customer-
+   specific salt and timestamp to prevent casual inspection.  This is
+   obfuscation, not cryptographic security.  The stored data contains
+   no PII regardless of encoding.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Surampudi               Expires 2 September 2026               [Page 19]
+
+Internet-Draft                    WTX-1                       March 2026
+
+
+9.  Threat Model and Mitigations
+
+9.1.  Token Replay Attacks
+
+   Threat: An attacker intercepts a cross-domain token and attempts to
+   reuse it to impersonate the original user.
+
+   Mitigations:
+
+   *  Tokens include a unique nonce that is tracked server-side
+      (Section 6.2).
+
+   *  Each token can only be verified once; subsequent attempts return
+      TOKEN_REPLAYED.
+
+   *  Tokens have a short expiry window (default: 5 minutes), limiting
+      the replay attack surface.
+
+   *  The verification server SHOULD log replay attempts for security
+      monitoring.
+
+9.2.  Token Interception
+
+   Threat: Third-party scripts or browser extensions read the cross-
+   domain token before it is consumed by the SDK.
+
+   Mitigations:
+
+   *  Hash fragment transport prevents server-side logging and network
+      intermediary visibility.
+
+   *  The early-cleanup script (Section 5.2) removes the token from
+      window.location.hash before third-party scripts execute.
+
+   *  The SDK deletes window.__nylo_early_token immediately after
+      consuming it.
+
+   *  Token single-use enforcement means an intercepted token becomes
+      invalid after first verification.
+
+   Residual risk: Browser extensions with content script access can
+   read window.location.hash synchronously during page load, before
+   even the early-cleanup script executes.  This is a fundamental
+   browser architecture limitation that cannot be mitigated at the
+   protocol level.
+
+
+
+
+Surampudi               Expires 2 September 2026               [Page 20]
+
+Internet-Draft                    WTX-1                       March 2026
+
+
+9.3.  Browser Extension Limitations
+
+   Browser extensions with appropriate permissions (e.g.,
+   activeTab, <all_urls>) can:
+
+   *  Read window.location.hash before any page JavaScript executes
+
+   *  Observe history.replaceState() calls and capture the original URL
+
+   *  Access window.__nylo_early_token before the SDK consumes it
+
+   *  Intercept network requests to the verification server
+
+   These capabilities are inherent to the browser extension model and
+   cannot be prevented by any web protocol.  WTX-1 does not claim to
+   protect against malicious browser extensions, as this is outside the
+   web security model.
+
+   However, the following protocol properties limit the value of
+   extension-based interception:
+
+   *  Single-use tokens: An intercepted token can only be verified once.
+      If the legitimate SDK verifies first, the attacker's attempt
+      fails.
+
+   *  Short expiry: Tokens expire quickly (default: 5 minutes),
+      limiting the window for exploitation.
+
+   *  Pseudonymous data only: Even if a token is intercepted, it
+      reveals only a pseudonymous WaiTag, not personal information.
+
+9.4.  HTTPS Requirement
+
+   All token transport and verification MUST occur over HTTPS.  The
+   protocol MUST NOT be used over unencrypted HTTP.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Surampudi               Expires 2 September 2026               [Page 21]
+
+Internet-Draft                    WTX-1                       March 2026
+
+
+9.5.  Cross-Site Scripting (XSS)
+
+   If the destination page is vulnerable to XSS, an attacker's injected
+   script could read the hash fragment or window.__nylo_early_token
+   before the SDK consumes it.  Implementations MUST sanitize all token
+   data before use and never insert token values into the DOM without
+   proper escaping.  The early-cleanup script mitigates this partially
+   by reducing the window, but an XSS vulnerability undermines all
+   client-side security guarantees.
+
+9.6.  DNS Spoofing
+
+   DNS TXT record verification is subject to DNS spoofing attacks.
+   Implementations SHOULD use DNSSEC where available and validate DNS
+   responses over secure channels (DNS-over-HTTPS or DNS-over-TLS).
+
+9.7.  Server-Side Key Management
+
+   The shared HMAC key used for token signing MUST be stored securely.
+   Implementations SHOULD rotate HMAC keys periodically (recommended:
+   every 90 days), support multiple active keys during rotation
+   periods, and use hardware security modules (HSMs) or key management
+   services where available.
+
+9.8.  Rate Limiting
+
+   Verification endpoints MUST implement rate limiting to prevent token
+   brute-force attacks, denial-of-service, and nonce table exhaustion.
+   Recommended limits: 100 verification requests per IP per minute,
+   with exponential backoff on failures.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Surampudi               Expires 2 September 2026               [Page 22]
+
+Internet-Draft                    WTX-1                       March 2026
+
+
+10.  Consent and Anonymous Mode
+
+10.1.  Consent API
+
+   Implementations MUST provide a consent API that integrates with
+   Consent Management Platforms (CMPs).  The API MUST support the
+   following operations:
+
+   *  setConsent({analytics: false}) - Deny consent, switch to
+      anonymous mode
+
+   *  setConsent({analytics: true}) - Grant consent, restore identity
+      tracking
+
+   *  getConsent() - Query current consent state, returns
+      {analytics: boolean}
+
+10.2.  Anonymous Mode Behavior
+
+   When consent is denied, the client MUST operate in anonymous mode
+   with the following behavior:
+
+   *  Event tracking remains active but with no identity attached.
+
+   *  WaiTag generation is disabled; waiTag is null.
+
+   *  The identify() API call is a no-op and is silently ignored.
+
+   *  getSession() returns null for waiTag and userId fields.
+
+   *  Cross-domain identity is disabled; no tokens are generated or
+      accepted.
+
+   *  Only a session-scoped anonymous identifier is used (format:
+      anon_<timestamp>_<random>).
+
+   *  No persistent identity data is written to cookies, localStorage,
+      or sessionStorage.
+
+
+
+
+
+
+
+
+
+
+
+
+Surampudi               Expires 2 September 2026               [Page 23]
+
+Internet-Draft                    WTX-1                       March 2026
+
+
+10.3.  Consent Restoration
+
+   When consent is granted after starting in anonymous mode:
+
+   1.  The client checks for previously stored identity data.
+
+   2.  If found, the existing WaiTag and session are restored.
+
+   3.  If not found, a new WaiTag is generated.
+
+   4.  Cross-domain token checking is activated.
+
+   5.  Full identity tracking resumes.
+
+10.4.  Regulatory Considerations
+
+   WaiTags are designed to fall outside the GDPR [GDPR] definition of
+   "personal data" as defined in Article 4(1) of Regulation (EU)
+   2016/679 because they contain no information derived from a natural
+   person, cannot be reversed or cross-referenced to identify someone,
+   and are not deterministic across sessions.
+
+   However, the classification of pseudonymous identifiers under data
+   protection law varies by jurisdiction and is subject to evolving
+   regulatory interpretation.  Implementers SHOULD consult local legal
+   counsel.  The anonymous mode provides a conservative fallback for
+   jurisdictions where pseudonymous identifiers may be considered
+   personal data.
+
+11.  Security Considerations
+
+   The complete threat model and mitigations are described in Section 9.
+   This section summarizes the key security requirements.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Surampudi               Expires 2 September 2026               [Page 24]
+
+Internet-Draft                    WTX-1                       March 2026
+
+
+11.1.  Token Security
+
+   *  Tokens MUST be signed server-side using HMAC [RFC2104] or an
+      equivalent mechanism.
+
+   *  Tokens MUST have a configurable expiry window.  The recommended
+      default is 5 minutes.
+
+   *  Tokens MUST be single-use.  The server MUST reject replayed
+      tokens with TOKEN_REPLAYED.
+
+   *  Token verification MUST validate the signature, expiry, and
+      replay status.
+
+11.2.  Transport Security
+
+   *  All API communication between the client and the verification
+      server MUST use HTTPS [RFC2818].
+
+   *  Hash fragment transport prevents server-side token logging by
+      design, as fragments are not included in HTTP requests per
+      [RFC3986].
+
+   *  Query parameter transport is disabled by default and requires
+      explicit opt-in.
+
+   *  The early-cleanup script (Section 5.2) SHOULD be deployed to
+      minimize the token visibility window.
+
+11.3.  Input Validation
+
+   *  All client-supplied strings MUST be sanitized to prevent cross-
+      site scripting (XSS) attacks.  HTML entity encoding is
+      RECOMMENDED.
+
+   *  String fields MUST be length-limited.  The recommended maximum is
+      1,000 characters.
+
+   *  Domain values MUST be validated before use in DNS lookups or
+      token generation.
+
+
+
+
+
+
+
+
+
+
+Surampudi               Expires 2 September 2026               [Page 25]
+
+Internet-Draft                    WTX-1                       March 2026
+
+
+11.4.  Rate Limiting
+
+   *  API endpoints MUST implement rate limiting.  The recommended
+      default is 100 requests per IP address per minute.
+
+   *  Rate limit status MUST be communicated via X-RateLimit-Limit,
+      X-RateLimit-Remaining, and X-RateLimit-Reset response headers.
+
+   *  Exceeded limits MUST return HTTP 429 (Too Many Requests).
+
+11.5.  Response Headers
+
+   Servers implementing WTX-1 SHOULD set the following security-related
+   response headers:
+
+   *  X-Content-Type-Options: nosniff
+
+   *  X-Frame-Options: SAMEORIGIN
+
+   *  Referrer-Policy: strict-origin-when-cross-origin
+
+   *  Permissions-Policy: camera=(), microphone=(), geolocation=()
+
+   *  Content-Security-Policy: Appropriate policy for the deployment
+
+   *  Strict-Transport-Security: max-age=31536000; includeSubDomains
+      (when serving over HTTPS)
+
+12.  IANA Considerations
+
+   This document has no IANA actions.
+
+   If this protocol achieves broader adoption, the following
+   registrations may be requested in future revisions:
+
+   *  Registration of the "_nylo-verify" DNS underscore name prefix in
+      the "Underscored and Globally Scoped DNS Node Names" registry per
+      RFC 8552.
+
+   *  Registration of the "nylo_token" and "wai_token" URI fragment
+      parameter names if a suitable registry is established.
+
+
+
+
+
+
+
+
+Surampudi               Expires 2 September 2026               [Page 26]
+
+Internet-Draft                    WTX-1                       March 2026
+
+
+13.  Privacy Considerations
+
+   WTX-1 is designed from the ground up to preserve user privacy while
+   enabling cross-domain analytics.  This section details the privacy
+   properties, guarantees, and limitations of the protocol.  This
+   analysis is relevant to the IRTF PEARG charter on "privacy analysis
+   of proposed and deployed technologies."
+
+13.1.  Core Privacy Commitments
+
+   1.  No PII collection: The protocol never collects, transmits, or
+       derives personal information such as names, email addresses,
+       phone numbers, or physical addresses.
+
+   2.  No fingerprinting: No hardware, software, or behavioral signals
+       (screen resolution, installed fonts, GPU rendering, etc.) are
+       used to generate or correlate identifiers.
+
+   3.  No third-party cookies: Cross-domain identity does not use the
+       Set-Cookie/Cookie HTTP mechanism for cross-domain transfer.
+
+   4.  No login required: Identity preservation works for anonymous
+       visitors without requiring authentication or account creation.
+
+   5.  Consent-respecting: The protocol degrades to fully anonymous
+       tracking when consent is denied, ensuring compliance with
+       opt-out requirements.
+
+   6.  Domain-authorized: Only DNS-verified domains can participate in
+       identity sharing, preventing unauthorized cross-domain tracking.
+
+   7.  Time-limited tokens: Cross-domain tokens expire (default 5
+       minutes), preventing indefinite tracking or token reuse.
+
+   8.  Client-side token reading: Hash fragment transport ensures
+       tokens are never sent to destination servers in HTTP requests.
+
+
+
+
+
+
+
+
+
+
+
+
+
+Surampudi               Expires 2 September 2026               [Page 27]
+
+Internet-Draft                    WTX-1                       March 2026
+
+
+13.2.  Pseudonymous Identifiers and GDPR
+
+   WaiTags are pseudonymous identifiers generated using
+   cryptographically secure random number generators
+   (window.crypto.getRandomValues).  They contain no embedded personal
+   information, device characteristics, or derivable real-world
+   identity.  A WaiTag cannot be reversed to identify a natural person
+   without access to a separate mapping table, which the protocol does
+   not define or require.
+
+   Under GDPR, pseudonymous identifiers are considered personal data
+   when they can be attributed to a natural person using additional
+   information (Article 4(5)).  WTX-1 does not define or require such
+   a mapping.  Implementors who create such mappings take on the full
+   obligations of a GDPR data controller.
+
+   Implementors SHOULD NOT create WaiTag-to-identity mappings unless
+   they have a clear lawful basis and have completed a Data Protection
+   Impact Assessment (DPIA).
+
+13.3.  User Control and Consent
+
+   Implementations MUST provide users with clear mechanisms to:
+
+   1.  Opt out of cross-domain identity sharing while retaining
+       single-domain analytics.
+
+   2.  Clear their WaiTag and session data at any time.
+
+   3.  View what data has been collected about their pseudonymous
+       identity.
+
+   4.  Request deletion of all data associated with their WaiTag
+       (GDPR Article 17).
+
+   When a user denies consent, the protocol MUST degrade gracefully to
+   anonymous mode where no cross-domain tokens are generated or
+   accepted, and only aggregate, non-identifiable analytics are
+   collected.
+
+
+
+
+
+
+
+
+
+
+
+Surampudi               Expires 2 September 2026               [Page 28]
+
+Internet-Draft                    WTX-1                       March 2026
+
+
+13.4.  Data Minimization
+
+   The protocol follows the principle of data minimization as required
+   by GDPR Article 5(1)(c).  Cross-domain tokens contain only the
+   minimum fields necessary for identity verification.  No behavioral
+   data, page content, interaction history, device information, or
+   browsing history is included in the token.
+
+13.5.  Cross-Domain Tracking Scope
+
+   Cross-domain identity sharing is limited to domains that have been
+   explicitly authorized via DNS TXT records.  This prevents a domain
+   from being included in a tracking network without the domain owner's
+   explicit consent.
+
+   Implementations MUST NOT allow wildcard domain authorization or open
+   enrollment of domains into a tracking network.
+
+13.6.  Consent-Gated Degradation
+
+   When consent is denied:
+
+   *  No WaiTag is generated or stored
+
+   *  No cross-domain tokens are created or accepted
+
+   *  Events are tracked with a random per-session identifier only
+
+   *  No data persists beyond the current page session
+
+   *  The SDK operates in a fully anonymous mode with no cross-domain
+      capability
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Surampudi               Expires 2 September 2026               [Page 29]
+
+Internet-Draft                    WTX-1                       March 2026
+
+
+13.7.  Identifier Rotation
+
+   WaiTags stored in localStorage persist until explicitly cleared.  To
+   limit the window of potential correlation, implementations SHOULD
+   implement rotation policies -- for example, regenerating the WaiTag
+   every 90 days.  This bounds the maximum duration over which a single
+   pseudonymous identifier can be used to correlate cross-domain visits.
+
+13.8.  Regulatory Compliance
+
+   WTX-1 is designed to operate within the following regulatory
+   frameworks:
+
+   *  GDPR (EU): Pseudonymous processing with data minimization,
+      purpose limitation, and right to erasure support.
+
+   *  CCPA/CPRA (California): No sale of personal information; supports
+      opt-out mechanisms.
+
+   *  ePrivacy Directive (EU): No use of cookies or similar
+      technologies for cross-domain transfer; hash fragment transport
+      does not trigger cookie consent requirements.
+
+   *  HIPAA (US Healthcare): No collection or transmission of Protected
+      Health Information (PHI).
+
+   *  COPPA (US Children): Protocol does not collect age information;
+      implementors in child-directed services MUST implement additional
+      safeguards.
+
+13.9.  Limitations and Residual Risks
+
+   While WTX-1 provides strong privacy guarantees, the following
+   residual risks should be acknowledged:
+
+   *  Server-side correlation: Organizations operating multiple domains
+      may correlate WaiTags server-side.  The protocol limits this to
+      DNS-authorized domains but cannot prevent the authorizing
+      organization from performing correlation.
+
+   *  Token interception: Although hash fragment transport prevents
+      tokens from being sent in HTTP requests, tokens may be visible to
+      browser extensions or client-side JavaScript before cleanup
+      occurs.
+
+   *  Referrer leakage: Some browsers may include hash fragments in
+      Referer headers under certain conditions.  Implementations SHOULD
+      set Referrer-Policy headers.
+
+   *  Long-lived sessions: If WaiTags are stored without expiration,
+      they persist indefinitely.  Implementations SHOULD implement
+      rotation or expiration policies.
+
+
+
+Surampudi               Expires 2 September 2026               [Page 30]
+
+Internet-Draft                    WTX-1                       March 2026
+
+
+13.10.  Research Questions for Privacy Analysis
+
+   The following open questions are relevant to the PEARG research
+   community and are offered for analysis and discussion:
+
+   1.  Is hash fragment transport a sufficient privacy boundary, or
+       should browser APIs provide a dedicated secure channel for
+       cross-domain context transfer?
+
+   2.  What is the appropriate entropy threshold for pseudonymous
+       identifiers to balance collision resistance with correlation
+       risk?
+
+   3.  How does DNS-based domain authorization compare to other trust
+       establishment mechanisms (e.g., certificate-based, blockchain-
+       based) for preventing unauthorized tracking network expansion?
+
+   4.  Can the early-cleanup script's effectiveness be formally verified
+       against the browser execution model, or are there edge cases
+       where script execution order is not guaranteed?
+
+   5.  What rotation period for pseudonymous identifiers optimally
+       balances analytics utility with privacy protection?
+
+14.  Measurable Security Properties
+
+   This section defines quantifiable security claims that can be
+   independently verified through measurement.  Each claim includes its
+   expected value, measurement methodology, and (where applicable) the
+   SDK API for programmatic verification.  These measurable properties
+   are central to PEARG-style privacy analysis, enabling reproducible
+   evaluation of the protocol's security guarantees.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Surampudi               Expires 2 September 2026               [Page 31]
+
+Internet-Draft                    WTX-1                       March 2026
+
+
+14.1.  Logging Surface Reduction
+
+   Claim: When using hash fragment transport (default), cross-domain
+   tokens appear in 0 out of 6 standard HTTP logging fields.
+
+   +==================================+=================+==============+
+   | Logging Field                    | Query Parameter | Hash         |
+   |                                  |                 | Fragment     |
+   +==================================+=================+==============+
+   | Server access log (request URI)  | Token visible   | Token absent |
+   +----------------------------------+-----------------+--------------+
+   | Referer header to third parties  | Token visible   | Token absent |
+   +----------------------------------+-----------------+--------------+
+   | Proxy/CDN request logs           | Token visible   | Token absent |
+   +----------------------------------+-----------------+--------------+
+   | WAF logs                         | Token visible   | Token absent |
+   +----------------------------------+-----------------+--------------+
+   | Browser Referer to destination   | Token visible   | Token absent |
+   | server                           |                 |              |
+   +----------------------------------+-----------------+--------------+
+   | Network packet inspection        | Token visible   | Token absent |
+   | (pre-TLS)                        | (in URI)        |              |
+   +----------------------------------+-----------------+--------------+
+
+              Table 4: Token Presence in HTTP Logging Fields
+
+   Measurement methodology: Configure a destination server to log all
+   request headers and the full request URI.  Navigate to
+   destination.com/page#nylo_token=test_token.  Verify that test_token
+   does not appear in any server-side log entry.  Repeat with
+   destination.com/page?nylo_token=test_token and verify it appears in
+   all 6 fields.
+
+   SDK verification: The SDK exposes
+   getTimingMetrics().loggingSurfaceFields which returns 0 for hash
+   transport and 6 for query transport.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Surampudi               Expires 2 September 2026               [Page 32]
+
+Internet-Draft                    WTX-1                       March 2026
+
+
+14.2.  Token Visibility Window
+
+   Claim: With the early-cleanup script deployed, the token is visible
+   in window.location.hash for less than 1 millisecond.  Without early-
+   cleanup, the token is visible for the entire duration from page load
+   to SDK initialization (typically 200-800ms depending on page
+   complexity).
+
+   +===================================+==============================+
+   | Configuration                     | Expected Visibility Window   |
+   +===================================+==============================+
+   | Early-cleanup script deployed     | < 1ms                        |
+   +-----------------------------------+------------------------------+
+   | SDK-only cleanup (no early-       | 200-800ms                    |
+   | cleanup)                          |                              |
+   +-----------------------------------+------------------------------+
+   | No cleanup (misconfigured)        | Indefinite                   |
+   +-----------------------------------+------------------------------+
+
+           Table 5: Token Visibility Window by Configuration
+
+   Measurement methodology: The early-cleanup script captures
+   performance.now() timestamps at script start, token extraction, and
+   URL cleanup (history.replaceState).  The visibility window is the
+   duration between start and cleanup completion.  These timestamps are
+   stored in window.__nylo_early_token_timing and consumed by the SDK.
+
+   SDK verification: getTimingMetrics().earlyCleanup.durationMs reports
+   the early-cleanup duration.  getTimingMetrics().tokenVisibilityWindowMs
+   reports the total visibility window.
+
+14.3.  Token Entropy
+
+   Claim: Each WaiTag contains 128 bits of cryptographic entropy from
+   the Web Crypto API [W3C-WebCryptoAPI].
+
+   +==========================+============================+==========+
+   | Component                | Entropy Source              | Bits     |
+   +==========================+============================+==========+
+   | Random ID                | crypto.getRandomValues(new  | 128      |
+   |                          | Uint8Array(16))             |          |
+   +--------------------------+----------------------------+----------+
+   | Domain hash              | Deterministic (not entropy) | 0        |
+   +--------------------------+----------------------------+----------+
+   | Total cryptographic      |                             | 128 bits |
+   | entropy                  |                             |          |
+   +--------------------------+----------------------------+----------+
+
+                      Table 6: WaiTag Entropy Sources
+
+
+
+Surampudi               Expires 2 September 2026               [Page 33]
+
+Internet-Draft                    WTX-1                       March 2026
+
+
+   Measurement methodology: Generate 10,000 WaiTags and verify no
+   collisions.  Extract the random component and verify uniform
+   distribution across the base-36 character space.  Verify the source
+   is crypto.getRandomValues (not Math.random).
+
+   Expected collision probability: For 128 bits of entropy, the
+   probability of collision in a set of N identifiers is approximately
+   N^2 / 2^129.  For 1 billion identifiers: approximately
+   1.47 x 10^-21.
+
+14.4.  Token Lifetime and Replay Surface
+
+   Claim: Each token is valid for exactly one verification attempt and
+   expires after a configurable window (default: 300 seconds /
+   5 minutes).
+
+   +==================================+================================+
+   | Property                         | Value                          |
+   +==================================+================================+
+   | Maximum token lifetime           | 300 seconds (configurable)     |
+   +----------------------------------+--------------------------------+
+   | Maximum verification attempts    | 1 (one-time-use)               |
+   +----------------------------------+--------------------------------+
+   | Server-side nonce retention      | At least token lifetime        |
+   +----------------------------------+--------------------------------+
+   | Replay after first verification  | Rejected with TOKEN_REPLAYED   |
+   +----------------------------------+--------------------------------+
+   | Replay after expiry              | Rejected with TOKEN_EXPIRED    |
+   +----------------------------------+--------------------------------+
+
+                    Table 7: Token Lifetime Properties
+
+   Measurement methodology: Generate a cross-domain token.  Submit it
+   for verification -- expect success.  Submit the same token again --
+   expect TOKEN_REPLAYED error.  Generate a new token, wait more than
+   300 seconds, submit -- expect TOKEN_EXPIRED error.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Surampudi               Expires 2 September 2026               [Page 34]
+
+Internet-Draft                    WTX-1                       March 2026
+
+
+14.5.  Token Verification Latency
+
+   Claim: End-to-end token verification (from SDK token detection to
+   server response) completes in under 100ms on typical network
+   conditions.
+
+   +==========================================+========================+
+   | Phase                                    | Expected Duration      |
+   +==========================================+========================+
+   | Token detection (SDK)                    | < 1ms                  |
+   +------------------------------------------+------------------------+
+   | Token extraction and URL cleanup         | < 1ms                  |
+   +------------------------------------------+------------------------+
+   | Network round-trip to verification       | 20-80ms (varies)       |
+   | server                                   |                        |
+   +------------------------------------------+------------------------+
+   | Server-side verification                 | < 5ms                  |
+   +------------------------------------------+------------------------+
+   | Identity restoration (SDK)               | < 1ms                  |
+   +------------------------------------------+------------------------+
+   | Total                                    | < 100ms typical        |
+   +------------------------------------------+------------------------+
+
+                Table 8: Verification Latency by Phase
+
+   SDK verification: getTimingMetrics().tokenVerification.durationMs
+   reports the verification round-trip duration.
+   getTimingMetrics().sdkInitDurationMs reports total SDK initialization
+   time.
+
+14.6.  HTTP Data Leakage
+
+   Claim: With hash fragment transport, exactly 0 bytes of token data
+   are transmitted in any HTTP request from the client to the
+   destination server.
+
+   This is a structural guarantee, not a runtime measurement.  Per
+   [RFC3986] Section 3.5, the fragment component of a URI is not sent
+   in HTTP requests.  This behavior is implemented by all conforming
+   HTTP user agents and cannot be overridden by JavaScript or server
+   configuration.
+
+   Measurement methodology: Use a network capture tool (e.g.,
+   Wireshark, browser DevTools Network tab) to inspect the HTTP request
+   to destination.com/page#nylo_token=test_token.  Verify that the
+   request URI is /page with no fragment component.  Verify that no
+   request header contains the token value.
+
+
+
+Surampudi               Expires 2 September 2026               [Page 35]
+
+Internet-Draft                    WTX-1                       March 2026
+
+
+15.  References
+
+15.1.  Normative References
+
+   [RFC2104]  Krawczyk, H., Bellare, M., and R. Canetti, "HMAC: Keyed-
+              Hashing for Message Authentication", RFC 2104,
+              DOI 10.17487/RFC2104, February 1997,
+              <https://www.rfc-editor.org/info/rfc2104>.
+
+   [RFC2119]  Bradner, S., "Key words for use in RFCs to Indicate
+              Requirement Levels", BCP 14, RFC 2119,
+              DOI 10.17487/RFC2119, March 1997,
+              <https://www.rfc-editor.org/info/rfc2119>.
+
+   [RFC2818]  Rescorla, E., "HTTP Over TLS", RFC 2818,
+              DOI 10.17487/RFC2818, May 2000,
+              <https://www.rfc-editor.org/info/rfc2818>.
+
+   [RFC3986]  Berners-Lee, T., Fielding, R., and L. Masinter, "Uniform
+              Resource Identifier (URI): Generic Syntax", STD 66,
+              RFC 3986, DOI 10.17487/RFC3986, January 2005,
+              <https://www.rfc-editor.org/info/rfc3986>.
+
+   [RFC8174]  Leiba, B., "Ambiguity of Uppercase vs Lowercase in RFC
+              2119 Key Words", BCP 14, RFC 8174, DOI 10.17487/RFC8174,
+              May 2017, <https://www.rfc-editor.org/info/rfc8174>.
+
+15.2.  Informative References
+
+   [RFC7519]  Jones, M., Bradley, J., and N. Sakimura, "JSON Web Token
+              (JWT)", RFC 7519, DOI 10.17487/RFC7519, May 2015,
+              <https://www.rfc-editor.org/info/rfc7519>.
+
+   [W3C-WebCryptoAPI]
+              W3C, "Web Cryptography API",
+              https://www.w3.org/TR/WebCryptoAPI/, W3C Recommendation,
+              January 2017.
+
+   [W3C-PerformanceAPI]
+              W3C, "Performance API",
+              https://www.w3.org/TR/performance-timeline/,
+              W3C Recommendation.
+
+   [GDPR]     European Parliament and Council, "Regulation (EU) 2016/679
+              (General Data Protection Regulation)",
+              https://eur-lex.europa.eu/eli/reg/2016/679/oj, April 2016.
+
+
+
+Surampudi               Expires 2 September 2026               [Page 36]
+
+Internet-Draft                    WTX-1                       March 2026
+
+
+   [ITP]      Apple WebKit, "Intelligent Tracking Prevention",
+              https://webkit.org/blog/7675/intelligent-tracking-
+              prevention/, June 2017.
+
+   [PEARG]    IRTF, "Privacy Enhancements and Assessments Research
+              Group (PEARG)",
+              https://irtf.org/pearg.
+
+Comparison with Existing Approaches
+
+   +========+==============+================+===========+=============+
+   |Property| 3P Cookies   | Fingerprinting |Login-Based| WTX-1       |
+   +========+==============+================+===========+=============+
+   |Cross   | Yes          | Yes            |Yes        | Yes         |
+   |eTLD+1  | (deprecated) |                |           |             |
+   +--------+--------------+----------------+-----------+-------------+
+   |Requires| No           | No             |Yes        | No          |
+   |login   |              |                |           |             |
+   +--------+--------------+----------------+-----------+-------------+
+   |Collects| Varies       | Yes            |Yes        | No          |
+   |PII     |              |                |           |             |
+   +--------+--------------+----------------+-----------+-------------+
+   |Browser | Declining    | Declining      |Universal  | Universal   |
+   |support |              |                |           |             |
+   +--------+--------------+----------------+-----------+-------------+
+   |Consent | Yes          | Yes            |Varies     | Recommended |
+   |required|              |                |           |             |
+   +--------+--------------+----------------+-----------+-------------+
+   |Works on| No (ITP)     | Partially      |Yes        | Yes         |
+   |Safari  |              |                |           | (degraded)  |
+   +--------+--------------+----------------+-----------+-------------+
+   |Replay  | N/A          | N/A            |N/A        | Protected   |
+   |protect.|              |                |           | (nonce)     |
+   +--------+--------------+----------------+-----------+-------------+
+
+              Table 9: Cross-Domain Identity Approaches
+
+Acknowledgments
+
+   WTX-1 was developed as part of the Nylo project to address the
+   analytics gap created by the deprecation of third-party cookies,
+   with a focus on privacy-respecting solutions for regulated industries
+   including healthcare, finance, and government.
+
+Author's Address
+
+   Ravi Teja Surampudi
+   Nylo Project
+   Email: ravisurampudi@outlook.com
+   URI:   https://github.com/tejasgit/nylo
+
+
+
+Surampudi               Expires 2 September 2026               [Page 38]

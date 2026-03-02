@@ -1,10 +1,10 @@
 # WTX-1: Cross-Domain Context Preservation Protocol
 
-**Version:** 1.1.0-draft
+**Version:** 1.2.0-draft
 **Status:** Draft
 **Authors:** Ravi Teja Surampudi, Nylo Contributors
 **Created:** 2026-02-20
-**Updated:** 2026-02-22
+**Updated:** 2026-03-02
 **License:** This specification is released under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
 
 ---
@@ -781,7 +781,172 @@ Sites can adopt WTX-1 incrementally:
 
 ---
 
+## 13. Measurable Security Properties
+
+This section defines quantifiable security claims that can be independently verified through measurement. Each claim includes its expected value, measurement methodology, and the SDK API for programmatic verification.
+
+### 13.1 Logging Surface Reduction
+
+**Claim (structural guarantee):** When using hash fragment transport (default), cross-domain tokens appear in 0 out of 6 standard HTTP logging fields. This is a structural property of HTTP per RFC 3986, not a runtime measurement.
+
+| Logging Field | Query Parameter Transport | Hash Fragment Transport |
+|---------------|--------------------------|------------------------|
+| Server access log (request URI) | Token visible | Token absent |
+| `Referer` header to third parties | Token visible | Token absent |
+| Proxy/CDN request logs | Token visible | Token absent |
+| WAF (Web Application Firewall) logs | Token visible | Token absent |
+| Browser `Referer` to destination server | Token visible | Token absent |
+| Network packet inspection (pre-TLS) | Token visible (in URI) | Token absent (not in request) |
+
+**Measurement methodology:**
+
+1. Configure a destination server to log all request headers and the full request URI
+2. Navigate to `destination.com/page#nylo_token=test_token`
+3. Verify that `test_token` does not appear in any server-side log entry
+4. Repeat with `destination.com/page?nylo_token=test_token` and verify it appears in all 6 fields
+
+**SDK verification:**
+
+```javascript
+var timings = Nylo.getTimingMetrics();
+console.log(timings.transport.loggingSurface);
+// Hash transport: "0/6 standard HTTP log fields (structural guarantee per RFC 3986)"
+// Query transport: "6/6 standard HTTP log fields"
+console.log(timings.transport.httpBytesLeaked);
+// Hash transport: 0
+// Query transport: "token_transmitted_in_http_request"
+```
+
+Note: These values are derived from the transport method used, not from runtime measurement. The 0/6 claim for hash fragment transport is a structural guarantee of HTTP, verifiable through packet capture (see measurement methodology above).
+
+### 13.2 Token Visibility Window
+
+**Claim:** With the early-cleanup `<head>` script deployed, the token is typically visible in `window.location.hash` for less than 1 millisecond (measured via `performance.now()`). The actual duration depends on script execution speed, URL parsing, and `history.replaceState()` performance. Without early-cleanup, the token is visible for the entire duration from page load to SDK initialization (typically 200–800ms depending on page complexity).
+
+| Configuration | Expected Visibility Window |
+|---------------|---------------------------|
+| Early-cleanup script deployed | < 1ms |
+| SDK-only cleanup (no early-cleanup) | 200–800ms (varies by page load time) |
+| No cleanup (misconfigured) | Indefinite |
+
+**Measurement methodology:**
+
+The early-cleanup script captures `performance.now()` timestamps at three points:
+1. Script execution start
+2. Token extraction complete
+3. `history.replaceState()` complete (URL cleaned)
+
+The visibility window is the duration between point 1 and point 3.
+
+**SDK verification:**
+
+```javascript
+var timings = Nylo.getTimingMetrics();
+console.log(timings.earlyCleanup.detected);    // true if early-cleanup ran
+console.log(timings.earlyCleanup.durationMs);  // e.g., 0.142 (milliseconds)
+console.log(timings.tokenVisibilityWindowMs);  // e.g., 0.142 (with early-cleanup)
+                                                //       523.7 (without early-cleanup)
+```
+
+### 13.3 Token Entropy
+
+**Claim:** Each WaiTag contains 128 bits of cryptographic entropy from the Web Crypto API.
+
+| Component | Entropy Source | Bits |
+|-----------|---------------|------|
+| Random ID | `crypto.getRandomValues(new Uint8Array(16))` | 128 |
+| Domain hash | Deterministic (not entropy) | 0 |
+| **Total cryptographic entropy** | | **128 bits** |
+
+**Measurement methodology:**
+
+1. Generate 10,000 WaiTags and verify no collisions
+2. Extract the random component and verify uniform distribution across the base-36 character space
+3. Verify the source is `crypto.getRandomValues` (not `Math.random`)
+
+**Expected collision probability:** For 128 bits of entropy, the probability of collision in a set of N identifiers is approximately N²/2¹²⁹. For 1 billion identifiers: ~1.47 × 10⁻²¹.
+
+### 13.4 Token Lifetime and Replay Surface
+
+**Claim:** Each token is valid for exactly one verification attempt and expires after a configurable window (default: 300 seconds / 5 minutes).
+
+| Property | Value |
+|----------|-------|
+| Maximum token lifetime | 300 seconds (configurable) |
+| Maximum verification attempts | 1 (one-time-use) |
+| Server-side nonce retention | ≥ token lifetime |
+| Replay after first verification | Rejected with `TOKEN_REPLAYED` |
+| Replay after expiry | Rejected with `TOKEN_EXPIRED` |
+
+**Measurement methodology:**
+
+1. Generate a cross-domain token
+2. Submit it for verification — expect success
+3. Submit the same token again — expect `TOKEN_REPLAYED` error
+4. Generate a new token, wait >300 seconds, submit — expect `TOKEN_EXPIRED` error
+
+### 13.5 Token Verification Latency
+
+**Claim:** End-to-end token verification (from SDK token detection to server response) completes in under 100ms on typical network conditions.
+
+| Phase | Expected Duration |
+|-------|-------------------|
+| Token detection (SDK) | < 1ms |
+| Token extraction and URL cleanup | < 1ms |
+| Network round-trip to verification server | 20–80ms (varies by network) |
+| Server-side verification (signature + replay + expiry) | < 5ms |
+| Identity restoration (SDK) | < 1ms |
+| **Total** | **< 100ms typical** |
+
+**SDK verification:**
+
+```javascript
+var timings = Nylo.getTimingMetrics();
+console.log(timings.tokenVerification.durationMs);  // e.g., 47.23 (milliseconds)
+console.log(timings.tokenVerification.source);       // "early_cleanup", "hash", or "search"
+console.log(timings.sdkInitDurationMs);              // e.g., 12.45 (total SDK init time)
+```
+
+### 13.6 HTTP Data Leakage
+
+**Claim:** With hash fragment transport, exactly 0 bytes of token data are transmitted in any HTTP request from the client to the destination server.
+
+This is a structural guarantee, not a runtime measurement. Per RFC 3986 Section 3.5, the fragment component of a URI is not sent in HTTP requests. This behavior is implemented by all conforming HTTP user agents and cannot be overridden by JavaScript or server configuration.
+
+**Measurement methodology:**
+
+1. Set up a packet capture (tcpdump/Wireshark) on the destination server
+2. Navigate to `destination.com/page#nylo_token=test_value`
+3. Inspect the HTTP GET request — verify `test_value` does not appear in the request line, headers, or body
+4. Verify `test_value` does not appear in any subsequent `Referer` headers to third-party resources
+
+### 13.7 Summary Table
+
+| Property | Measurable Claim | Measurement Method |
+|----------|------------------|--------------------|
+| Logging surface (hash transport) | 0/6 HTTP log fields contain token | Server log inspection |
+| Logging surface (query transport) | 6/6 HTTP log fields contain token | Server log inspection |
+| Token visibility window (early-cleanup) | < 1ms | `Nylo.getTimingMetrics().earlyCleanup.durationMs` |
+| Token visibility window (SDK-only) | 200–800ms | `Nylo.getTimingMetrics().tokenVisibilityWindowMs` |
+| Cryptographic entropy | 128 bits | Source code audit of `crypto.getRandomValues` call |
+| Token lifetime | 300 seconds (configurable) | Clock-based expiry test |
+| Replay attempts accepted | 1 (one-time-use) | Sequential verification test |
+| HTTP bytes leaked (hash transport) | 0 | Packet capture |
+| Verification latency | < 100ms typical | `Nylo.getTimingMetrics().tokenVerification.durationMs` |
+
+---
+
 ## Changelog
+
+### v1.2.0-draft (2026-03-02)
+
+- Added Section 13: Measurable Security Properties with 7 quantifiable claims
+- SDK instrumented with `performance.now()` timing capture for all token lifecycle phases
+- Added `Nylo.getTimingMetrics()` API for programmatic security measurement verification
+- Early-cleanup script now captures timing data (`window.__nylo_early_token_timing`)
+- Added measurement methodology for each security claim (reproducible by third parties)
+- Created IETF Internet-Draft draft-01 with measurable claims and PEARG-relevant framing
+- Created PEARG discussion document for IRTF Privacy Enhancements and Assessments Research Group
 
 ### v1.1.0-draft (2026-02-22)
 

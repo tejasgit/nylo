@@ -24,7 +24,7 @@ Tokens are HMAC-signed, expire in 5 minutes, and are one-time-use with server-si
 
 - **Protocol spec:** [github.com/tejasgit/wtx-1](https://github.com/tejasgit/wtx-1) (CC BY 4.0)
 - **Reference SDK:** [github.com/tejasgit/nylo](https://github.com/tejasgit/nylo) (MIT — zero dependencies)
-- **IETF Draft:** [draft-surampudi-wtx1-00](https://datatracker.ietf.org/doc/draft-surampudi-wtx1/)
+- **IETF Draft:** [draft-surampudi-wtx1-01](https://datatracker.ietf.org/doc/draft-surampudi-wtx1/)
 - **W3C Privacy CG proposal:** submitted for community review
 
 ## Looking for feedback on

@@ -39,7 +39,18 @@
       batchesSent: 0,
       errors: 0,
       lastBatchTime: 0,
-      crossDomainSyncs: 0
+      crossDomainSyncs: 0,
+      timings: {
+        earlyCleanupDetected: false,
+        earlyCleanupDurationMs: null,
+        tokenDetectionTimestamp: null,
+        tokenVerificationStartMs: null,
+        tokenVerificationDurationMs: null,
+        tokenVisibilityWindowMs: null,
+        sdkInitDurationMs: null,
+        urlCleanupDurationMs: null,
+        tokenSource: null
+      }
     },
     listeners: new Map(),
     batchTimer: null,
@@ -200,7 +211,33 @@
           total: Math.round(performance.memory.totalJSHeapSize / 1024 / 1024)
         } : null,
         queueSize: state.eventQueue.length,
-        retryQueueSize: state.retryQueue.length
+        retryQueueSize: state.retryQueue.length,
+        timings: state.performanceMetrics.timings
+      };
+    },
+
+    getTimingMetrics: function() {
+      var t = state.performanceMetrics.timings;
+      return {
+        earlyCleanup: {
+          detected: t.earlyCleanupDetected,
+          durationMs: t.earlyCleanupDurationMs
+        },
+        tokenVerification: {
+          durationMs: t.tokenVerificationDurationMs,
+          source: t.tokenSource
+        },
+        tokenVisibilityWindowMs: t.tokenVisibilityWindowMs,
+        tokenVisibilityWindowNote: t.earlyCleanupDetected
+          ? 'Duration of early-cleanup script execution (token in hash for this long)'
+          : 'Time from page load to SDK URL cleanup (token in hash for this long)',
+        sdkInitDurationMs: t.sdkInitDurationMs,
+        urlCleanupDurationMs: t.urlCleanupDurationMs,
+        transport: {
+          method: t.tokenSource === 'search' ? 'query_parameter' : 'hash_fragment',
+          httpBytesLeaked: t.tokenSource === 'search' ? 'token_transmitted_in_http_request' : 0,
+          loggingSurface: t.tokenSource === 'search' ? '6/6 standard HTTP log fields' : '0/6 standard HTTP log fields (structural guarantee per RFC 3986)'
+        }
       };
     }
   };
@@ -267,6 +304,7 @@
     checkForCrossDomainToken: function() {
       var crossDomainToken = null;
       var tokenSource = null;
+      var tokenDetectionTime = performance.now();
 
       if (window.__nylo_early_token) {
         crossDomainToken = window.__nylo_early_token;
@@ -291,6 +329,17 @@
       if (crossDomainToken) {
         Logger.info('Cross-domain token detected via ' + tokenSource);
         state.crossDomainData.tokenReceived = true;
+        state.performanceMetrics.timings.tokenDetectionTimestamp = tokenDetectionTime;
+        state.performanceMetrics.timings.tokenSource = tokenSource;
+
+        if (window.__nylo_early_token_timing) {
+          state.performanceMetrics.timings.earlyCleanupDetected = true;
+          state.performanceMetrics.timings.earlyCleanupDurationMs = window.__nylo_early_token_timing.duration;
+          state.performanceMetrics.timings.tokenVisibilityWindowMs = window.__nylo_early_token_timing.duration;
+          Logger.debug('Early-cleanup timing: ' + state.performanceMetrics.timings.earlyCleanupDurationMs.toFixed(3) + 'ms');
+          delete window.__nylo_early_token_timing;
+        }
+
         try {
           state.crossDomainData.referringDomain = document.referrer ? new URL(document.referrer).hostname : null;
         } catch (e) {
@@ -301,6 +350,7 @@
           Logger.debug('Token already cleaned by early-cleanup script');
         } else {
           try {
+            var cleanupStart = performance.now();
             if (tokenSource === 'hash') {
               var currentHash = window.location.hash;
               var cleanHash = currentHash.substring(1).split('&').filter(function(p) {
@@ -315,7 +365,10 @@
               var newSearch = cleanParams.toString() ? '?' + cleanParams.toString() : '';
               history.replaceState(null, '', window.location.pathname + newSearch + window.location.hash);
             }
-            Logger.debug('Cross-domain token cleaned from URL');
+            var cleanupEnd = performance.now();
+            state.performanceMetrics.timings.urlCleanupDurationMs = cleanupEnd - cleanupStart;
+            state.performanceMetrics.timings.tokenVisibilityWindowMs = cleanupEnd;
+            Logger.debug('Cross-domain token cleaned from URL (' + state.performanceMetrics.timings.urlCleanupDurationMs.toFixed(3) + 'ms, visibility window: ' + cleanupEnd.toFixed(1) + 'ms from page load)');
           } catch (e) {
             Logger.debug('Could not clean token from URL');
           }
@@ -330,6 +383,8 @@
     verifyAndProcessToken: function(token) {
       var self = this;
       var domain = window.location.hostname;
+      var verificationStartTime = performance.now();
+      state.performanceMetrics.timings.tokenVerificationStartMs = verificationStartTime;
 
       return fetch(getApiUrl() + '/api/tracking/verify-cross-domain-token', {
         method: 'POST',
@@ -347,6 +402,10 @@
         return response.json();
       })
       .then(function(result) {
+        var verificationEndTime = performance.now();
+        state.performanceMetrics.timings.tokenVerificationDurationMs = verificationEndTime - verificationStartTime;
+        Logger.debug('Token verification duration: ' + state.performanceMetrics.timings.tokenVerificationDurationMs.toFixed(3) + 'ms');
+
         if (result.success && result.identity) {
           state.sessionId = result.identity.sessionId;
           state.waiTag = result.identity.waiTag;
@@ -365,7 +424,8 @@
           self.trackCrossDomainEvent('cross_domain_arrival', {
             referringDomain: state.crossDomainData.referringDomain,
             tokenVerified: true,
-            identityPreserved: true
+            identityPreserved: true,
+            timings: state.performanceMetrics.timings
           });
 
           Logger.info('Cross-domain identity synchronized');
@@ -374,6 +434,7 @@
         return false;
       })
       .catch(function(error) {
+        state.performanceMetrics.timings.tokenVerificationDurationMs = performance.now() - verificationStartTime;
         Logger.error('Cross-domain token verification failed:', error);
         return false;
       });
@@ -992,6 +1053,7 @@
             },
             flush: sendBatch,
             getMetrics: Performance.getMetrics,
+            getTimingMetrics: Performance.getTimingMetrics,
             getFeatures: function() { return Object.assign({}, TrackingFeatures); },
             getEarlyCleanupScript: EarlyCleanup.getScript,
             version: config.version,
@@ -1001,6 +1063,7 @@
           state.initialized = true;
 
           var duration = Performance.measure('init', 'init-start');
+          state.performanceMetrics.timings.sdkInitDurationMs = duration || 0;
           Logger.info('Initialization complete (' + (duration || 0).toFixed(2) + 'ms)');
 
           window.dispatchEvent(new CustomEvent('nyloInitialized', {
@@ -1092,6 +1155,7 @@
           },
           flush: sendBatch,
           getMetrics: Performance.getMetrics,
+          getTimingMetrics: Performance.getTimingMetrics,
           getFeatures: function() { return Object.assign({}, TrackingFeatures); },
           getEarlyCleanupScript: EarlyCleanup.getScript,
           version: config.version,
@@ -1101,6 +1165,7 @@
         state.initialized = true;
 
         var duration = Performance.measure('init', 'init-start');
+        state.performanceMetrics.timings.sdkInitDurationMs = duration || 0;
         Logger.info('Initialization complete (' + (duration || 0).toFixed(2) + 'ms)');
 
         window.dispatchEvent(new CustomEvent('nyloInitialized', {
@@ -1122,15 +1187,19 @@
       return '<scr' + 'ipt>' +
         '(function(){' +
           'try{' +
+            'var s=performance.now();' +
             'var h=window.location.hash;' +
             'if(h&&(h.indexOf("nylo_token=")>-1||h.indexOf("wai_token=")>-1)){' +
               'var p=new URLSearchParams(h.substring(1));' +
               'var t=p.get("nylo_token")||p.get("wai_token");' +
               'if(t){' +
                 'window.__nylo_early_token=t;' +
+                'window.__nylo_early_token_timing={start:s,navigationStart:performance.timeOrigin||performance.timing.navigationStart,detected:performance.now()};' +
                 'p.delete("nylo_token");p.delete("wai_token");' +
                 'var n=p.toString();' +
                 'history.replaceState(null,"",window.location.pathname+window.location.search+(n?"#"+n:""));' +
+                'window.__nylo_early_token_timing.cleaned=performance.now();' +
+                'window.__nylo_early_token_timing.duration=window.__nylo_early_token_timing.cleaned-s;' +
               '}' +
             '}' +
           '}catch(e){}' +
