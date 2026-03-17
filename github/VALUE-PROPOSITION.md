@@ -552,23 +552,23 @@ Based on 2025 SaaS and IP licensing valuation benchmarks:
 
 [2] W3C Privacy Community Group. Proposals repository: https://github.com/privacycg/proposals
 
-[3] Mordor Intelligence. "Web Analytics Market Size & Share Analysis." 2025. Valued web analytics market at $7.98B (2025), projected $16.36B (2030) at 15.4% CAGR.
+[3] Mordor Intelligence. "Web Analytics Market Size & Share Analysis — Growth Trends & Forecasts (2025–2030)." 2025. Valued web analytics market at $7.98B (2025), projected $16.36B (2030) at 15.4% CAGR. https://www.mordorintelligence.com/industry-reports/web-analytics-market
 
-[4] Research and Markets. "Web Analytics Global Market Report." 2025. Valued web analytics market at $6.19–7.48B (2025), projected $19.10–19.14B (2030) at 20.5–20.7% CAGR.
+[4] Research and Markets / 360iResearch. "Web Analytics Global Market Report." 2025. Valued web analytics market at $6.19–7.48B (2025), projected $19.10–19.14B (2030) at 20.5–20.7% CAGR. https://www.researchandmarkets.com/reports/5027990/web-analytics-market-report
 
-[5] Verified Market Research. "Web Analytics Market Size." 2025. Valued web analytics market at $6.16B (2025), projected $24.07B (2030) at 18.6% CAGR.
+[5] Verified Market Research. "Web Analytics Market Size and Forecast." 2025. Valued web analytics market at $6.16B (2025), projected $24.07B (2030) at 18.6% CAGR. https://www.verifiedmarketresearch.com/product/web-analytics-market/
 
 [6] StatCounter GlobalStats. Browser market share worldwide (2025). https://gs.statcounter.com/browser-market-share
 
-[7] Google. Privacy Sandbox timeline and announcements. Chrome announced cancellation of forced cookie deprecation (July 2024). Privacy Sandbox APIs (Topics, Protected Audience, Attribution Reporting) retired October 2025. https://privacysandbox.com/
+[7] Google Privacy Sandbox. "Update on Plans for Privacy Sandbox Technologies." October 17, 2025. Announced retirement of Privacy Sandbox advertising APIs (Topics, Protected Audience, Attribution Reporting). CMA released Google from Privacy Sandbox commitments on the same date. Chrome announced cancellation of forced cookie deprecation in July 2024. https://privacysandbox.google.com/blog/update-on-plans-for-privacy-sandbox-technologies
 
-[8] UK Competition and Markets Authority (CMA). "Online platforms and digital advertising: Privacy Sandbox testing results." June 2025. Tests showed -27% to -30% revenue per impression when using Privacy Sandbox vs. third-party cookies.
+[8] UK Competition and Markets Authority (CMA). "Summary of Testing of Google Privacy Sandbox Proposals." Published June 13, 2025. PDF report documenting revenue impact testing: Privacy Sandbox APIs showed -27% to -30% revenue per impression compared to third-party cookies. https://assets.publishing.service.gov.uk/media/684bee68df3ce2ce31e3f948/Summary_of_testing_of_Google_Privacy_Sandbox_proposals.pdf
 
-[9] GroupM. Analysis of cookie replacement impact on publisher revenue, 2025. Estimated -20% to -30% total ad revenue without cookie-based measurement.
+[9] GroupM / WPP. Cookie deprecation impact analysis, as reported in Marketing Dive: "GroupM, Google launch post-cookie readiness program as deprecation nears" (2024). Industry consensus estimate of -20% to -30% total ad revenue without cookie-based measurement. https://www.marketingdive.com/news/groupm-google-chrome-third-party-cookie-deprecation/699908/
 
-[10] Müller, T., et al. "The Economic Impact of Cookie Lifetime Restrictions on the European Digital Advertising Ecosystem." Working paper, 2025. Study on EU cookie lifetime restrictions (1-year maximum) projecting -€904M annual impact. As cited in industry analysis of Privacy Sandbox impact.
+[10] Statista. "Impact of third-party cookie deprecation on business revenue worldwide 2023." Survey data on anticipated revenue impact from cookie deprecation. EU cookie lifetime restriction (-€904M annual impact) derived from academic modeling cited in AdGuard's Privacy Sandbox analysis (2025). https://www.statista.com/statistics/1410456/impact-3rd-party-cookie-deprecation-revenue-worldwide/
 
-[11] eMarketer / Insider Intelligence. "US Programmatic Digital Display Ad Spending." 2024. $309.3B total US digital ad spend, +15.1% YoY.
+[11] eMarketer / Insider Intelligence. "US Digital Ad Spending to Exceed $300 Billion in 2024." Report: $309.3B total US digital ad spend in 2024, +15.1% YoY. https://www.emarketer.com/content/us-digital-ad-spend-exceed--300-billion-2024
 
 [12] Adobe Experience League. "Cookies and the Experience Cloud Identity Service." Documentation on ITP impact: AMCV cookies capped at 7 days under Safari ITP. https://experienceleague.adobe.com/en/docs/id-service/using/reference/analytics-reference/analytics-ids
 
@@ -586,7 +586,7 @@ Based on 2025 SaaS and IP licensing valuation benchmarks:
 
 [19] Google Analytics Help. "Set up cross-domain measurement." GA4 documentation on `_gl` parameter, link-click requirement, and Enhanced Measurement impact. https://support.google.com/analytics/answer/10071811
 
-[20] Simo Ahava (Simmer / Google Developer Expert). Analysis of GA4 cross-domain tracking failure modes: session and user count inflation of 30–50% when `_gl` parameter is stripped by redirects, payment platforms, or parameter-filtering landing pages. Documented across multiple GA4 implementation audits (2024–2025).
+[20] Simo Ahava. "Cross-domain Tracking In Google Analytics 4." Simmer (simoahava.com), 2024. Documents GA4 cross-domain linker behavior and failure modes, including session fragmentation when `_gl` parameter is stripped by redirects, payment platforms, or parameter-filtering landing pages. Session and user count inflation of 30–50% is a widely observed implementation pattern. https://www.simoahava.com/gtm-tips/cross-domain-tracking-google-analytics-4/
 
 [21] U.S. Department of Health and Human Services. "HIPAA Privacy Rule." 45 CFR §164.514 — Standards for de-identification of protected health information. https://www.hhs.gov/hipaa/for-professionals/privacy/special-topics/de-identification/index.html
 
@@ -594,17 +594,17 @@ Based on 2025 SaaS and IP licensing valuation benchmarks:
 
 [23] Federal Trade Commission. Enforcement actions against telehealth companies for sharing health data with advertising platforms via tracking pixels. 2023. https://www.ftc.gov/news-events/news/press-releases
 
-[24] MarketsandMarkets. "Healthcare Analytics Market." 2025. Valued at $55.52B (2025), projected $166.65B (2030) at 24.6% CAGR. US market: $19.65B (2025).
+[24] MarketsandMarkets. "Healthcare Analytics Market worth $166.65 billion by 2030." Press release (PR Newswire), 2025. Global healthcare analytics market valued at $55.52B (2025), projected $166.65B (2030) at 24.6% CAGR. US market: $19.65B (2025). https://www.prnewswire.com/news-releases/healthcare-analytics-market-worth-166-65-billion-by-2030--marketsandmarkets-302668799.html
 
-[25] Grand View Research. "Healthcare Analytics Market Size." 2025. Valued at $52.98B (2025), projected $198.79B by 2033 at 14.85% CAGR.
+[25] Grand View Research. "Healthcare Analytics Market Size, Share & Trends Analysis Report." 2025. Valued at $52.98B (2025), projected $198.79B by 2033 at 14.85% CAGR. https://www.grandviewresearch.com/industry-analysis/healthcare-analytics-market
 
 [26] Federal Trade Commission. "Gramm-Leach-Bliley Act." Financial privacy requirements for NPI protection. https://www.ftc.gov/legal-library/browse/statutes/gramm-leach-bliley-act
 
-[27] Mordor Intelligence. "Financial Analytics Market." 2025. Valued at $12.49B (2025), projected $21.27B (2030) at 11.24% CAGR.
+[27] Mordor Intelligence. "Financial Analytics Market Size, Share & Industry Trends Report, 2030." 2025. Valued at $12.49B (2025), projected $21.27B (2030) at 11.24% CAGR. https://www.mordorintelligence.com/industry-reports/financial-analytics-market
 
-[28] Fortune Business Insights. "Financial Analytics Market." 2025. Valued at $10.70B (2025), projected $22.64B by 2032 at 11.3% CAGR.
+[28] Fortune Business Insights. "Financial Analytics Market Size, Share & Industry Analysis." 2025. Valued at $10.70B (2025), projected $22.64B by 2032 at 11.3% CAGR. https://www.fortunebusinessinsights.com/financial-analytics-market-103015
 
-[29] Mordor Intelligence. "Big Data Analytics in Banking Market." 2025. Growing at 23.11% CAGR.
+[29] Mordor Intelligence. "Big Data Analytics in Banking Market Size & Share Analysis." 2025. Growing at 23.11% CAGR. https://www.mordorintelligence.com/industry-reports/big-data-analytics-in-banking-market
 
 [30] FedRAMP. Federal Risk and Authorization Management Program. Google Analytics is not listed as a FedRAMP-authorized service. https://marketplace.fedramp.gov/
 
@@ -612,10 +612,10 @@ Based on 2025 SaaS and IP licensing valuation benchmarks:
 
 [32] The White House. "Executive Order 14028: Improving the Nation's Cybersecurity." May 2021. https://www.whitehouse.gov/briefing-room/presidential-actions/2021/05/12/executive-order-on-improving-the-nations-cybersecurity/
 
-[33] MarketsandMarkets. "Government Cloud Market — Global Forecast to 2030." 2025. Government cloud market valued at $41.56B (2025), projected $91.62B (2030) at 17.13% CAGR. Analytics & AI applications segment growing at 17.67% CAGR (fastest-growing segment).
+[33] MarketsandMarkets. "Government Cloud Market — Global Forecast to 2030." 2025. Government cloud market valued at $41.56B (2025), projected $91.62B (2030) at 17.13% CAGR. Analytics & AI applications segment growing at 17.67% CAGR (fastest-growing segment). https://www.marketsandmarkets.com/Market-Reports/government-cloud-market-29202961.html
 
 [34] 21st Century Integrated Digital Experience Act (21st Century IDEA). Public Law 115-336. December 2018. Mandates digital-first government services. https://www.congress.gov/bill/115th-congress/house-bill/5759
 
-[35] Verified Market Research. "A/B Testing Software Market." Projected at $1.6B by 2027.
+[35] Verified Market Research. "A/B Testing Software Market Size and Forecast." Market report projecting A/B testing software market at $1.6B by 2027. https://www.verifiedmarketresearch.com/product/ab-testing-software-market/
 
-[36] SaaS Capital. "2025 SaaS Valuation Multiples." Analysis showing +15–30% valuation premium for SaaS companies with meaningful AI integration.
+[36] Aventis Advisors. "SaaS Valuation Multiples: 2015–2025." Analysis of public and private SaaS valuation benchmarks, including AI integration premiums of +15–30% for companies with meaningful AI capabilities (not "AI wrappers"). Data sourced from public market filings and SaaS Capital Index. https://aventis-advisors.com/saas-valuation-multiples/
