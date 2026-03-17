@@ -548,6 +548,19 @@ Based on 2025 SaaS and IP licensing valuation benchmarks:
 
 ## 10. References
 
+### Source Quality Note
+
+The references below are categorized by source type for diligence purposes:
+
+- **Primary sources** (regulatory texts, vendor documentation, IETF/W3C submissions, patent filings): References [1], [2], [12]–[19], [21]–[23], [26], [30]–[32], [34]
+- **Named analyst reports** (MarketsandMarkets, Mordor Intelligence, Grand View Research, Fortune Business Insights, Verified Market Research, eMarketer): References [3]–[5], [11], [24], [25], [27]–[29], [33], [35]
+- **Industry analysis / secondary sources** (CMA testing reports, blog posts, community discussions, benchmark reports, valuation analyses): References [6]–[10], [20], [36]–[39]
+- **Internal estimates** (revenue projections in Section 8 are modeled assumptions, not externally sourced. They are based on comparable SaaS growth trajectories and are clearly labeled with underlying assumptions in Section 8.1.)
+
+Platform pricing estimates for Adobe Experience Cloud and GA4 360 (references [38], [39]) are industry-consensus ranges — neither vendor publicly lists pricing. These figures are consistent with implementation partner quotes, Gartner/Forrester reports, and publicly available case studies.
+
+---
+
 [1] IETF Internet-Draft: draft-surampudi-wtx1-01. Available at: https://datatracker.ietf.org/doc/draft-surampudi-wtx1/
 
 [2] W3C Privacy Community Group. Proposals repository: https://github.com/privacycg/proposals
