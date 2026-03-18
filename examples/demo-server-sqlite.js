@@ -13,8 +13,16 @@
  */
 
 const express = require('express');
+const crypto = require('crypto');
 const path = require('path');
 const { createSqliteStorage } = require('./storage-sqlite');
+
+const NYLO_TOKEN_SECRET = (function() {
+  if (process.env.NYLO_TOKEN_SECRET) return process.env.NYLO_TOKEN_SECRET;
+  const ephemeral = crypto.randomBytes(32).toString('hex');
+  console.warn('[SECURITY] NYLO_TOKEN_SECRET not set — generated ephemeral secret for this session.');
+  return ephemeral;
+})();
 
 const app = express();
 app.use(express.json());
@@ -113,17 +121,28 @@ app.post('/api/tracking/register-waitag', async (req, res) => {
 
 app.post('/api/tracking/verify-cross-domain-token', (req, res) => {
   const { token, domain } = req.body;
-  res.json({
-    success: true,
-    verified: true,
-    identity: {
-      sessionId: 'demo-session-' + Date.now().toString(36),
-      waiTag: 'wai_' + Date.now().toString(36) + '_demo',
-      userId: null
-    },
-    domain,
-    message: 'Token verified (demo mode)'
-  });
+  if (!token) return res.status(400).json({ success: false, message: 'Token is required' });
+
+  try {
+    const decoded = JSON.parse(Buffer.from(token, 'base64').toString('utf-8'));
+    if (!decoded.sig) {
+      return res.status(403).json({ success: false, error: 'MISSING_SIGNATURE', message: 'Token signature is required — unsigned tokens are rejected' });
+    }
+    if (!decoded.waiTag || !decoded.sessionId) {
+      return res.status(400).json({ success: false, error: 'INVALID_TOKEN', message: 'Token must contain waiTag and sessionId' });
+    }
+    if (decoded.exp && Date.now() > decoded.exp) {
+      return res.json({ success: false, error: 'TOKEN_EXPIRED', message: 'Token expired' });
+    }
+    const dataToSign = JSON.stringify({ waiTag: decoded.waiTag, sessionId: decoded.sessionId, userId: decoded.userId || null, domain: decoded.domain || '', exp: decoded.exp });
+    const expectedSig = crypto.createHmac('sha256', NYLO_TOKEN_SECRET).update(dataToSign).digest('hex');
+    if (decoded.sig.length !== expectedSig.length || !crypto.timingSafeEqual(Buffer.from(decoded.sig, 'hex'), Buffer.from(expectedSig, 'hex'))) {
+      return res.json({ success: false, error: 'INVALID_SIGNATURE', message: 'Invalid token signature' });
+    }
+    return res.json({ success: true, verified: true, identity: { sessionId: decoded.sessionId, waiTag: decoded.waiTag, userId: decoded.userId || null }, domain, verifiedAt: new Date().toISOString(), message: 'Token verified' });
+  } catch (e) {
+    return res.status(400).json({ success: false, error: 'MALFORMED_TOKEN', message: 'Token is not valid base64-encoded JSON' });
+  }
 });
 
 app.post('/api/tracking/sync-identity', (req, res) => {

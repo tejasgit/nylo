@@ -1,10 +1,10 @@
 # WTX-1: Cross-Domain Context Preservation Protocol
 
-**Version:** 1.2.0-draft
+**Version:** 1.3.0-draft
 **Status:** Draft
 **Authors:** Ravi Teja Surampudi, Nylo Contributors
 **Created:** 2026-02-20
-**Updated:** 2026-03-02
+**Updated:** 2026-03-18
 **License:** This specification is released under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
 
 ---
@@ -440,7 +440,18 @@ When restoring identity, the SDK reads in order: cookie → localStorage → ses
 }
 ```
 
-The `integrity` field is a one-way hash of `sessionId + domain + waiTag + customerId`, used to detect tampering.
+The `integrity` field is an HMAC-SHA256 computed over `sessionId + ':' + domain + ':' + waiTag + ':' + customerId` using the Web Crypto API (`crypto.subtle.sign`). The HMAC key is derived from the `customerId`. This provides cryptographic tamper detection — any modification to the stored identity data (via browser developer tools, cookie editors, or XSS) will cause the integrity check to fail on the next read.
+
+**Integrity verification on read:**
+
+When the SDK reads stored identity data from any storage layer, it verifies the HMAC integrity hash before using the data:
+
+1. If the HMAC is valid (64-character hex string matching the expected signature), the data is accepted.
+2. If the HMAC is invalid or missing, the data is rejected and the storage layer is cleared.
+3. If all three storage layers contain invalid data, the SDK generates a fresh identity.
+4. Legacy integrity hashes (pre-HMAC, using djb2) are automatically detected and migrated to HMAC on first read.
+
+**Limitations:** The HMAC key (`customerId`) is present in client-side JavaScript. An attacker with full script execution (XSS) can extract the key and forge valid integrity hashes. The integrity check is designed to prevent **casual tampering** (dev tools, cookie editors, browser extensions) and **cross-site cookie injection**, not to withstand a full XSS compromise. See Section 9.5 for the honest XSS threat model.
 
 ### 8.4 Obfuscation at Rest
 
@@ -458,8 +469,10 @@ Data stored in `localStorage` is encoded with a customer-specific salt and times
 | Token interception by third-party page scripts | High | Early-cleanup `<head>` script removes token from URL hash before other scripts execute; token stashed in implementation-specific global variable | Low — token accessible via `window.__nylo_early_token` if script knows the variable name; mitigated by one-time-use and short expiry |
 | Token interception by browser extensions | Medium | Short expiration + one-time-use verification | Low (see Section 9.3) |
 | Token replay | High | One-time-use verification with server-side nonce tracking | None |
+| Token forgery (unsigned tokens) | Critical | Mandatory HMAC-SHA256 signature on all tokens; unsigned tokens rejected with `MISSING_SIGNATURE` error; server refuses to verify tokens if signing secret is not configured | None |
 | Token tampering | High | HMAC-SHA256 signature verification | None |
 | Token expiration bypass | High | Server-side timestamp validation (default 5 minutes) | None |
+| Stored identity tampering | Medium | HMAC-SHA256 integrity validation on every storage read; tampered data is rejected and cleared | Low — attacker with XSS can extract HMAC key from client-side code |
 | Token exposure via URL sharing | Medium | Early-cleanup removes token before page renders + short expiration + one-time-use | Negligible |
 | Unauthorized domain participation | High | DNS TXT record verification | None |
 | Referrer header leakage | Low | Hash fragments are not included in `Referer` headers per browser spec; `Referrer-Policy: no-referrer` recommended | Negligible |
@@ -621,7 +634,7 @@ Until then, the combination of early-cleanup, one-time-use, short expiration, an
 
 All token transport and verification MUST occur over HTTPS. The protocol MUST NOT be used over unencrypted HTTP. Without TLS, tokens are visible to network intermediaries regardless of hash fragment or query parameter transport.
 
-### 9.5 Cross-Site Scripting (XSS)
+### 9.5 Cross-Site Scripting (XSS) — Honest Threat Model
 
 If the destination page is vulnerable to XSS, an attacker's injected script could read the hash fragment or `window.__nylo_early_token` before the SDK consumes it. Implementations MUST:
 - Sanitize all token data before use
@@ -629,6 +642,33 @@ If the destination page is vulnerable to XSS, an attacker's injected script coul
 - Follow OWASP XSS prevention guidelines
 
 The early-cleanup script mitigates this partially by reducing the window, but an XSS vulnerability on the destination page undermines all client-side security guarantees, not just WTX-1.
+
+**What the SDK protects against:**
+
+| Attack Vector | Protected? | Mechanism |
+|---------------|------------|-----------|
+| Casual cookie/storage tampering (dev tools, cookie editors) | Yes | HMAC-SHA256 integrity validation on read |
+| Cross-site cookie injection | Yes | HMAC integrity check rejects cookies not signed with the correct `customerId` |
+| Token forgery (crafting unsigned cross-domain tokens) | Yes | Server rejects all unsigned tokens; HMAC-SHA256 signature is mandatory |
+| Token replay | Yes | Server-side one-time-use nonce tracking |
+| Token interception via network | Yes | Hash fragment transport (never in HTTP requests) + HTTPS requirement |
+| Token interception via third-party page scripts | Mostly | Early-cleanup narrows window to <1ms; token is one-time-use |
+
+**What the SDK does NOT protect against (with XSS):**
+
+| Attack Vector | Why Not | Mitigation |
+|---------------|---------|------------|
+| XSS attacker reading stored identity (cookie, localStorage, sessionStorage) | All three storage layers are accessible to page JavaScript; `HttpOnly` on the cookie would only protect one of three copies | Prevent XSS; deploy CSP headers (see Section 9.9) |
+| XSS attacker forging integrity hashes | The HMAC key (`customerId`) is present in client-side code | Prevent XSS; `customerId` is not a secret |
+| XSS attacker reading `window.__nylo_early_token` before SDK consumes it | Global variable is accessible to any page script | Prevent XSS; token is one-time-use and short-lived |
+
+**Design rationale for not using HttpOnly cookies:**
+
+The SDK's identity cookie (`nylo_wai`) is intentionally set via client-side JavaScript (`document.cookie`) rather than via a server `Set-Cookie` header with `HttpOnly`. This decision is based on three factors:
+
+1. **The SDK is designed to work without a server dependency for local identity persistence.** Requiring a server roundtrip to set or read the identity cookie would break the zero-dependency, "drop a script tag" deployment model.
+2. **HttpOnly would protect only one of three storage copies.** The same identity data is stored in `localStorage` and `sessionStorage`, both fully accessible to JavaScript. Protecting the cookie alone provides negligible additional security against XSS.
+3. **The real defense is preventing XSS.** No amount of cookie flag hardening can protect a page with an active XSS vulnerability. The recommended approach is Content Security Policy (see Section 9.9) and standard XSS prevention practices.
 
 ### 9.6 DNS Spoofing
 
@@ -653,6 +693,40 @@ Verification endpoints MUST implement rate limiting to prevent:
 - Nonce table exhaustion from rapid replay attempts
 
 Recommended limits: 100 verification requests per IP per minute, with exponential backoff on failures.
+
+### 9.9 Content Security Policy (CSP) Recommendations
+
+Sites deploying WTX-1 SHOULD implement Content Security Policy headers to mitigate XSS attacks. The following CSP directives are recommended:
+
+```
+Content-Security-Policy:
+  default-src 'self';
+  script-src 'self' 'unsafe-inline';
+  connect-src 'self' https://your-verification-server.com;
+  style-src 'self' 'unsafe-inline';
+  img-src 'self' data:;
+  frame-ancestors 'none';
+  base-uri 'self';
+  form-action 'self';
+```
+
+**Notes:**
+
+- `script-src 'unsafe-inline'` is required for the early-cleanup `<head>` script (Section 5.2). If nonce-based CSP is used, the early-cleanup script MUST include the nonce: `<script nonce="<random>">`.
+- `connect-src` MUST include the verification server domain to allow the SDK's `fetch()` calls.
+- `frame-ancestors 'none'` prevents the page from being embedded in iframes, reducing clickjacking risk.
+- Sites using strict CSP with hash-based script allowlisting can compute the SHA-256 hash of the early-cleanup script and add it to `script-src`.
+
+### 9.10 Mandatory Token Signing
+
+All cross-domain tokens MUST be signed with HMAC-SHA256 using a server-side secret (`NYLO_TOKEN_SECRET`). Unsigned tokens MUST be rejected by the verification server with a `MISSING_SIGNATURE` error.
+
+**Server configuration requirements:**
+
+1. The `NYLO_TOKEN_SECRET` environment variable MUST be set before the server can issue or verify cross-domain tokens.
+2. If `NYLO_TOKEN_SECRET` is not configured, the server MUST refuse to verify tokens and SHOULD return a `503 Service Unavailable` response with a clear error message.
+3. The server MUST NOT fall back to accepting unsigned tokens under any circumstances.
+4. For demo/development environments, the server MAY generate an ephemeral random secret per session, but MUST log a prominent warning that tokens will not survive server restarts.
 
 ---
 
@@ -920,7 +994,38 @@ This is a structural guarantee, not a runtime measurement. Per RFC 3986 Section 
 3. Inspect the HTTP GET request — verify `test_value` does not appear in the request line, headers, or body
 4. Verify `test_value` does not appear in any subsequent `Referer` headers to third-party resources
 
-### 13.7 Summary Table
+### 13.7 Storage Integrity Validation
+
+**Claim:** All stored identity data (cookie, localStorage, sessionStorage) is validated with HMAC-SHA256 on every read. Tampered data is rejected and cleared.
+
+| Property | Value |
+|----------|-------|
+| Integrity algorithm | HMAC-SHA256 via Web Crypto API |
+| HMAC key derivation | `customerId` (client-side, not a secret) |
+| Validation frequency | Every storage read |
+| Tampered data behavior | Rejected, storage layer cleared |
+| All layers invalid behavior | Fresh identity generated |
+| Legacy hash migration | Automatic (djb2 → HMAC on first read) |
+
+**Measurement methodology:**
+
+1. Initialize the SDK and note the stored identity in `nylo_wai` cookie
+2. Modify the `waiTag` field in the cookie via browser developer tools
+3. Reload the page — the SDK should reject the tampered cookie and generate a new identity
+4. Verify the old `waiTag` is no longer in use
+
+### 13.8 Mandatory Token Signing
+
+**Claim:** The verification server rejects 100% of unsigned cross-domain tokens. No unsigned token can pass verification regardless of payload contents.
+
+**Measurement methodology:**
+
+1. Create a valid-looking token payload: `btoa(JSON.stringify({waiTag:"wai_test_1234", sessionId:"test", exp:9999999999999}))`
+2. Submit it to `/api/tracking/verify-cross-domain-token`
+3. Verify the server returns `403 MISSING_SIGNATURE`
+4. The same payload with a valid HMAC signature should succeed
+
+### 13.9 Summary Table
 
 | Property | Measurable Claim | Measurement Method |
 |----------|------------------|--------------------|
@@ -933,10 +1038,27 @@ This is a structural guarantee, not a runtime measurement. Per RFC 3986 Section 
 | Replay attempts accepted | 1 (one-time-use) | Sequential verification test |
 | HTTP bytes leaked (hash transport) | 0 | Packet capture |
 | Verification latency | < 100ms typical | `Nylo.getTimingMetrics().tokenVerification.durationMs` |
+| Unsigned token acceptance rate | 0% (all rejected) | Submit unsigned token, verify 403 response |
+| Storage integrity validation | HMAC-SHA256 on every read | Tamper cookie, verify rejection on reload |
 
 ---
 
 ## Changelog
+
+### v1.3.0-draft (2026-03-18)
+
+- **SECURITY FIX:** Mandatory token signing — unsigned cross-domain tokens are now rejected with `MISSING_SIGNATURE` error; servers refuse to verify tokens if `NYLO_TOKEN_SECRET` is not configured
+- **SECURITY FIX:** Storage integrity upgraded from djb2 hash to HMAC-SHA256 via Web Crypto API; all stored identity data validated on every read
+- Added Section 9.5 expanded XSS threat model: honest tables of what the SDK protects against and what it does not
+- Added Section 9.9: Content Security Policy (CSP) recommendations
+- Added Section 9.10: Mandatory Token Signing specification
+- Added Section 13.7: Storage Integrity Validation measurable claim
+- Added Section 13.8: Mandatory Token Signing measurable claim
+- Updated Section 8.3: Documented HMAC integrity with verification-on-read behavior and limitations
+- Updated threat model table: added token forgery and stored identity tampering rows
+- Added design rationale for not using HttpOnly cookies
+- Token generation endpoint added to server specification
+- Legacy djb2 integrity hashes automatically migrated to HMAC on first read
 
 ### v1.2.0-draft (2026-03-02)
 

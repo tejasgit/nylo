@@ -176,6 +176,41 @@
 
     generateIntegrityHash: function(sessionId, domain, waiTag) {
       return this.hashString(sessionId + ':' + domain + ':' + waiTag + ':' + customerId);
+    },
+
+    _hmacKeyPromise: null,
+
+    getHMACKey: function() {
+      if (this._hmacKeyPromise) return this._hmacKeyPromise;
+      var keyData = new TextEncoder().encode('nylo_integrity:' + customerId);
+      this._hmacKeyPromise = window.crypto.subtle.importKey(
+        'raw', keyData, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify']
+      );
+      return this._hmacKeyPromise;
+    },
+
+    generateIntegrityHMAC: function(sessionId, domain, waiTag) {
+      var data = sessionId + ':' + domain + ':' + waiTag + ':' + customerId;
+      var encoded = new TextEncoder().encode(data);
+      return this.getHMACKey().then(function(key) {
+        return window.crypto.subtle.sign('HMAC', key, encoded);
+      }).then(function(sig) {
+        return Array.from(new Uint8Array(sig), function(b) {
+          return b.toString(16).padStart(2, '0');
+        }).join('');
+      });
+    },
+
+    verifyIntegrityHMAC: function(sessionId, domain, waiTag, hmac) {
+      if (!hmac || typeof hmac !== 'string' || hmac.length !== 64) return Promise.resolve(false);
+      return this.generateIntegrityHMAC(sessionId, domain, waiTag).then(function(expected) {
+        if (expected.length !== hmac.length) return false;
+        var match = true;
+        for (var i = 0; i < expected.length; i++) {
+          if (expected[i] !== hmac[i]) match = false;
+        }
+        return match;
+      }).catch(function() { return false; });
     }
   };
 
@@ -413,13 +448,28 @@
           state.crossDomainData.identitySynced = true;
           state.performanceMetrics.crossDomainSyncs++;
 
-          self.storeIdentityData({
-            sessionId: state.sessionId,
-            waiTag: state.waiTag,
-            userId: state.userId,
-            domain: domain,
-            syncedAt: new Date().toISOString()
-          });
+          Security.generateIntegrityHMAC(state.sessionId, domain, state.waiTag)
+            .then(function(hmac) {
+              self.storeIdentityData({
+                sessionId: state.sessionId,
+                waiTag: state.waiTag,
+                userId: state.userId,
+                domain: domain,
+                syncedAt: new Date().toISOString(),
+                integrity: hmac
+              });
+            })
+            .catch(function() {
+              Logger.error('HMAC generation failed during cross-domain sync — storing without integrity');
+              self.storeIdentityData({
+                sessionId: state.sessionId,
+                waiTag: state.waiTag,
+                userId: state.userId,
+                domain: domain,
+                syncedAt: new Date().toISOString(),
+                integrity: null
+              });
+            });
 
           self.trackCrossDomainEvent('cross_domain_arrival', {
             referringDomain: state.crossDomainData.referringDomain,
@@ -441,6 +491,7 @@
     },
 
     generateNewIdentity: function() {
+      var self = this;
       var domain = window.location.hostname;
 
       state.sessionId = Security.generateSecureId(domain);
@@ -450,22 +501,37 @@
         Logger.error('Failed to generate secure identity — crypto API unavailable');
         state.sessionId = state.sessionId || 'anon_' + Date.now().toString(36);
         state.waiTag = null;
-        return;
+        return Promise.resolve();
       }
 
-      var identityData = {
-        sessionId: state.sessionId,
-        waiTag: state.waiTag,
-        userId: state.userId,
-        domain: domain,
-        createdAt: new Date().toISOString(),
-        integrity: Security.generateIntegrityHash(state.sessionId, domain, state.waiTag)
-      };
+      return Security.generateIntegrityHMAC(state.sessionId, domain, state.waiTag)
+        .then(function(hmac) {
+          var identityData = {
+            sessionId: state.sessionId,
+            waiTag: state.waiTag,
+            userId: state.userId,
+            domain: domain,
+            createdAt: new Date().toISOString(),
+            integrity: hmac
+          };
 
-      this.storeIdentityData(identityData);
-      this.registerIdentityWithServer(identityData);
-
-      Logger.info('New identity generated:', state.waiTag);
+          self.storeIdentityData(identityData);
+          self.registerIdentityWithServer(identityData);
+          Logger.info('New identity generated:', state.waiTag);
+        })
+        .catch(function() {
+          Logger.error('HMAC generation failed — identity stored without integrity (will be rejected on next read if crypto becomes available)');
+          var identityData = {
+            sessionId: state.sessionId,
+            waiTag: state.waiTag,
+            userId: state.userId,
+            domain: domain,
+            createdAt: new Date().toISOString(),
+            integrity: null
+          };
+          self.storeIdentityData(identityData);
+          self.registerIdentityWithServer(identityData);
+        });
     },
 
     storeIdentityData: function(identityData) {
@@ -494,27 +560,97 @@
       }
     },
 
-    getStoredIdentityData: function() {
+    _readRawStoredData: function() {
+      var candidates = [];
+
       try {
         var cookies = document.cookie.split(';');
         var waiCookie = cookies.find(function(c) { return c.trim().startsWith('nylo_wai='); });
         if (waiCookie) {
           var cookieData = waiCookie.split('=')[1];
-          return JSON.parse(atob(cookieData));
+          candidates.push({ source: 'cookie', data: JSON.parse(atob(cookieData)) });
         }
       } catch (e) {}
 
       try {
         var encryptedData = localStorage.getItem('nylo_cross_domain_identity');
-        if (encryptedData) return this.decryptIdentityData(encryptedData);
+        if (encryptedData) {
+          var decrypted = this.decryptIdentityData(encryptedData);
+          if (decrypted) candidates.push({ source: 'localStorage', data: decrypted });
+        }
       } catch (e) {}
 
       try {
         var sessionData = sessionStorage.getItem('nylo_session_identity');
-        if (sessionData) return JSON.parse(sessionData);
+        if (sessionData) candidates.push({ source: 'sessionStorage', data: JSON.parse(sessionData) });
       } catch (e) {}
 
-      return null;
+      return candidates;
+    },
+
+    _clearStorageLayer: function(source) {
+      try {
+        if (source === 'cookie') {
+          document.cookie = 'nylo_wai=; path=/; max-age=0';
+        } else if (source === 'localStorage') {
+          localStorage.removeItem('nylo_cross_domain_identity');
+        } else if (source === 'sessionStorage') {
+          sessionStorage.removeItem('nylo_session_identity');
+        }
+      } catch (e) {}
+    },
+
+    getStoredIdentityData: function() {
+      var self = this;
+      var candidates = this._readRawStoredData();
+
+      if (candidates.length === 0) return Promise.resolve(null);
+
+      var verificationChain = Promise.resolve(null);
+
+      candidates.forEach(function(candidate) {
+        verificationChain = verificationChain.then(function(verified) {
+          if (verified) return verified;
+
+          var d = candidate.data;
+          if (!d || !d.sessionId || !d.waiTag) {
+            self._clearStorageLayer(candidate.source);
+            return null;
+          }
+
+          if (d.integrity && typeof d.integrity === 'string' && d.integrity.length === 64) {
+            return Security.verifyIntegrityHMAC(d.sessionId, d.domain || '', d.waiTag, d.integrity)
+              .then(function(valid) {
+                if (valid) return d;
+                Logger.debug('Integrity check failed for ' + candidate.source + ' — clearing');
+                self._clearStorageLayer(candidate.source);
+                return null;
+              });
+          }
+
+          var legacyExpected = Security.generateIntegrityHash(d.sessionId, d.domain || '', d.waiTag);
+          if (d.integrity === legacyExpected) {
+            return Security.generateIntegrityHMAC(d.sessionId, d.domain || '', d.waiTag)
+              .then(function(hmac) {
+                d.integrity = hmac;
+                self.storeIdentityData(d);
+                Logger.debug('Migrated legacy integrity hash to HMAC for ' + candidate.source);
+                return d;
+              })
+              .catch(function() {
+                Logger.error('HMAC migration failed for legacy integrity — rejecting');
+                self._clearStorageLayer(candidate.source);
+                return null;
+              });
+          }
+
+          Logger.debug('Invalid integrity for ' + candidate.source + ' — clearing');
+          self._clearStorageLayer(candidate.source);
+          return null;
+        });
+      });
+
+      return verificationChain;
     },
 
     registerIdentityWithServer: function(identityData) {
@@ -1036,16 +1172,20 @@
                 Logger.info('Consent denied - switched to anonymous mode');
               } else if (consent && consent.analytics === true) {
                 config.anonymousMode = false;
-                var storedIdentity = CrossDomainIdentity.getStoredIdentityData();
-                if (storedIdentity && storedIdentity.sessionId && storedIdentity.waiTag) {
-                  state.sessionId = storedIdentity.sessionId;
-                  state.waiTag = storedIdentity.waiTag;
-                  state.userId = storedIdentity.userId;
-                } else {
-                  CrossDomainIdentity.generateNewIdentity();
-                }
-                CrossDomainIdentity.checkForCrossDomainToken();
-                Logger.info('Consent granted - identity tracking enabled');
+                CrossDomainIdentity.getStoredIdentityData()
+                  .then(function(storedIdentity) {
+                    if (storedIdentity && storedIdentity.sessionId && storedIdentity.waiTag) {
+                      state.sessionId = storedIdentity.sessionId;
+                      state.waiTag = storedIdentity.waiTag;
+                      state.userId = storedIdentity.userId;
+                    } else {
+                      return CrossDomainIdentity.generateNewIdentity();
+                    }
+                  })
+                  .then(function() {
+                    CrossDomainIdentity.checkForCrossDomainToken();
+                    Logger.info('Consent granted - identity tracking enabled');
+                  });
               }
             },
             getConsent: function() {
@@ -1084,16 +1224,19 @@
     CrossDomainIdentity.checkForCrossDomainToken()
       .then(function(crossDomainSuccess) {
         if (!crossDomainSuccess) {
-          var storedIdentity = CrossDomainIdentity.getStoredIdentityData();
-          if (storedIdentity && storedIdentity.sessionId && storedIdentity.waiTag) {
-            state.sessionId = storedIdentity.sessionId;
-            state.waiTag = storedIdentity.waiTag;
-            state.userId = storedIdentity.userId;
-          } else {
-            CrossDomainIdentity.generateNewIdentity();
-          }
+          return CrossDomainIdentity.getStoredIdentityData()
+            .then(function(storedIdentity) {
+              if (storedIdentity && storedIdentity.sessionId && storedIdentity.waiTag) {
+                state.sessionId = storedIdentity.sessionId;
+                state.waiTag = storedIdentity.waiTag;
+                state.userId = storedIdentity.userId;
+              } else {
+                return CrossDomainIdentity.generateNewIdentity();
+              }
+            });
         }
-
+      })
+      .then(function() {
         return parseEncryptedConfig(encryptedConfig, customerId);
       })
       .then(function() {
@@ -1112,11 +1255,19 @@
           trackConversion: Tracking.conversion,
           identify: function(userId) {
             state.userId = Security.sanitize(userId);
-            var identityData = CrossDomainIdentity.getStoredIdentityData();
-            if (identityData) {
-              identityData.userId = state.userId;
-              CrossDomainIdentity.storeIdentityData(identityData);
-            }
+            CrossDomainIdentity.getStoredIdentityData()
+              .then(function(identityData) {
+                if (identityData) {
+                  identityData.userId = state.userId;
+                  return Security.generateIntegrityHMAC(
+                    identityData.sessionId, identityData.domain || '', identityData.waiTag
+                  ).then(function(hmac) {
+                    identityData.integrity = hmac;
+                    CrossDomainIdentity.storeIdentityData(identityData);
+                  });
+                }
+              })
+              .catch(function() {});
           },
           getSession: function() {
             return {

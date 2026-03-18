@@ -242,74 +242,125 @@ export function registerWaiTagTrackingRoutes(app: any, storage: WaiTagStorage) {
         }
       }
 
-      if (storage.tokenReplayStore) {
-        const tokenHash = hashToken(token);
-        const alreadyUsed = await storage.tokenReplayStore.isTokenUsed(tokenHash);
-        if (alreadyUsed) {
-          return res.status(403).json({
-            success: false,
-            message: 'Token has already been used (replay detected)'
-          });
-        }
-        await storage.tokenReplayStore.markTokenUsed(tokenHash, 5 * 60 * 1000);
-      }
-
       const tokenSecret = process.env.NYLO_TOKEN_SECRET;
+
+      if (!tokenSecret) {
+        console.error('[SECURITY] NYLO_TOKEN_SECRET not configured — cross-domain token verification is unavailable');
+        return res.status(503).json({
+          success: false,
+          error: 'SECRET_NOT_CONFIGURED',
+          message: 'NYLO_TOKEN_SECRET is not configured — cross-domain token verification is unavailable'
+        });
+      }
 
       try {
         const decoded = JSON.parse(Buffer.from(token, 'base64').toString('utf-8'));
 
-        if (tokenSecret) {
-          const { valid, payload } = verifyTokenSignature(token, tokenSecret);
-          if (!valid) {
-            return res.json({
-              success: false,
-              message: 'Invalid or expired cross-domain token'
-            });
-          }
-
-          return res.json({
-            success: true,
-            identity: {
-              waiTag: payload.waiTag,
-              sessionId: payload.sessionId,
-              userId: payload.userId || null
-            },
-            verifiedAt: new Date().toISOString()
+        if (!decoded.sig) {
+          return res.status(403).json({
+            success: false,
+            error: 'MISSING_SIGNATURE',
+            message: 'Token signature is required — unsigned tokens are rejected'
           });
         }
 
-        if (!tokenSecret && decoded.sig) {
+        const { valid, payload } = verifyTokenSignature(token, tokenSecret);
+        if (!valid) {
           return res.json({
             success: false,
-            message: 'NYLO_TOKEN_SECRET not configured — cannot verify signed tokens'
+            error: 'INVALID_SIGNATURE',
+            message: 'Invalid or expired cross-domain token'
           });
         }
 
-        if (decoded.waiTag && decoded.sessionId) {
-          if (decoded.exp && Date.now() > decoded.exp) {
-            return res.json({ success: false, message: 'Token expired' });
+        if (storage.tokenReplayStore) {
+          const tokenHash = hashToken(token);
+          const alreadyUsed = await storage.tokenReplayStore.isTokenUsed(tokenHash);
+          if (alreadyUsed) {
+            return res.status(403).json({
+              success: false,
+              message: 'Token has already been used (replay detected)'
+            });
           }
-
-          return res.json({
-            success: true,
-            identity: {
-              waiTag: decoded.waiTag,
-              sessionId: decoded.sessionId,
-              userId: decoded.userId || null
-            },
-            verifiedAt: new Date().toISOString()
-          });
+          await storage.tokenReplayStore.markTokenUsed(tokenHash, 5 * 60 * 1000);
         }
-      } catch {
-      }
 
-      return res.json({
-        success: false,
-        message: 'Invalid or expired cross-domain token'
-      });
+        return res.json({
+          success: true,
+          identity: {
+            waiTag: payload.waiTag,
+            sessionId: payload.sessionId,
+            userId: payload.userId || null
+          },
+          verifiedAt: new Date().toISOString()
+        });
+      } catch {
+        return res.status(400).json({
+          success: false,
+          error: 'MALFORMED_TOKEN',
+          message: 'Token is not valid base64-encoded JSON'
+        });
+      }
     } catch (error) {
       console.error('Error verifying cross-domain token:', error);
+      return res.status(500).json({ success: false, message: 'Server error' });
+    }
+  });
+
+  app.post("/api/tracking/generate-cross-domain-token", async (req: Request, res: Response) => {
+    try {
+      const { waiTag, sessionId, userId, destinationDomain } = req.body;
+
+      if (!waiTag || !sessionId) {
+        return res.status(400).json({ success: false, message: 'waiTag and sessionId are required' });
+      }
+
+      const tokenSecret = process.env.NYLO_TOKEN_SECRET;
+      if (!tokenSecret) {
+        return res.status(503).json({
+          success: false,
+          error: 'SECRET_NOT_CONFIGURED',
+          message: 'NYLO_TOKEN_SECRET is not configured — cannot generate signed tokens'
+        });
+      }
+
+      if (storage.isDomainVerified && destinationDomain) {
+        const customerId = req.body.customerId ? parseInt(req.body.customerId) : 0;
+        if (customerId) {
+          const verified = await storage.isDomainVerified(destinationDomain, customerId);
+          if (!verified) {
+            return res.status(403).json({
+              success: false,
+              message: 'Destination domain not verified. Complete DNS verification first.'
+            });
+          }
+        }
+      }
+
+      const exp = Date.now() + 5 * 60 * 1000;
+      const tokenPayload = {
+        waiTag,
+        sessionId,
+        userId: userId || null,
+        domain: destinationDomain || '',
+        exp
+      };
+      const dataToSign = JSON.stringify(tokenPayload);
+      const sig = crypto.createHmac('sha256', tokenSecret).update(dataToSign).digest('hex');
+
+      const token = Buffer.from(JSON.stringify({ ...tokenPayload, sig })).toString('base64');
+
+      const origin = req.headers.origin || '*';
+      res.header('Access-Control-Allow-Origin', origin);
+      res.header('Access-Control-Allow-Credentials', 'true');
+
+      return res.json({
+        success: true,
+        token,
+        expiresAt: new Date(exp).toISOString()
+      });
+    } catch (error) {
+      console.error('Error generating cross-domain token:', error);
       return res.status(500).json({ success: false, message: 'Server error' });
     }
   });
