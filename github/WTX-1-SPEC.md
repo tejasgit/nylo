@@ -717,16 +717,27 @@ Content-Security-Policy:
 - `frame-ancestors 'none'` prevents the page from being embedded in iframes, reducing clickjacking risk.
 - Sites using strict CSP with hash-based script allowlisting can compute the SHA-256 hash of the early-cleanup script and add it to `script-src`.
 
-### 9.10 Mandatory Token Signing
+### 9.10 Mandatory Token Signing and Issuance Controls
 
 All cross-domain tokens MUST be signed with HMAC-SHA256 using a server-side secret (`NYLO_TOKEN_SECRET`). Unsigned tokens MUST be rejected by the verification server with a `MISSING_SIGNATURE` error.
 
 **Server configuration requirements:**
 
-1. The `NYLO_TOKEN_SECRET` environment variable MUST be set before the server can issue or verify cross-domain tokens.
-2. If `NYLO_TOKEN_SECRET` is not configured, the server MUST refuse to verify tokens and SHOULD return a `503 Service Unavailable` response with a clear error message.
-3. The server MUST NOT fall back to accepting unsigned tokens under any circumstances.
-4. For demo/development environments, the server MAY generate an ephemeral random secret per session, but MUST log a prominent warning that tokens will not survive server restarts.
+1. The `NYLO_TOKEN_SECRET` environment variable MUST be set at startup. If not configured, the server MUST NOT register cross-domain token endpoints (verify, generate) and MUST log a clear startup error.
+2. The server MUST NOT fall back to accepting unsigned tokens under any circumstances.
+3. For demo/development environments, the server MAY generate an ephemeral random secret per session, but MUST log a prominent warning that tokens will not survive server restarts.
+
+**Token issuance access control:**
+
+1. The token generation endpoint (`/api/tracking/generate-cross-domain-token`) MUST require authentication via an API key (`X-API-Key` header) validated against `NYLO_API_KEY`. Unauthenticated requests MUST be rejected with `401 Unauthorized`.
+2. The `destinationDomain` field MUST be required when generating tokens — tokens without a destination domain binding MUST be rejected.
+3. When domain verification is available, the server SHOULD verify that the authenticated customer owns the destination domain before issuing tokens.
+
+**Domain binding enforcement:**
+
+1. Tokens MUST include a `domain` field specifying the intended destination.
+2. During verification, if both the request `domain` and the token `domain` are present, the server MUST reject tokens where they do not match (403 `DOMAIN_MISMATCH`).
+3. This prevents token reuse across unrelated domains even if the token signature is valid.
 
 ---
 
@@ -1057,7 +1068,9 @@ This is a structural guarantee, not a runtime measurement. Per RFC 3986 Section 
 - Updated Section 8.3: Documented HMAC integrity with verification-on-read behavior and limitations
 - Updated threat model table: added token forgery and stored identity tampering rows
 - Added design rationale for not using HttpOnly cookies
-- Token generation endpoint added to server specification
+- Token generation endpoint requires API key authentication (`X-API-Key` header) and mandatory `destinationDomain` binding
+- Domain mismatch enforcement on verification (403 `DOMAIN_MISMATCH`)
+- Cross-domain endpoints not registered at startup if `NYLO_TOKEN_SECRET` is missing (fail-loud)
 - Legacy djb2 integrity hashes automatically migrated to HMAC on first read
 
 ### v1.2.0-draft (2026-03-02)

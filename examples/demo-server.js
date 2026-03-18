@@ -224,6 +224,10 @@ app.post('/api/tracking/verify-cross-domain-token', (req, res) => {
       return res.status(403).json({ success: false, error: 'INVALID_SIGNATURE', message: 'Invalid token signature' });
     }
 
+    if (domain && decoded.domain && decoded.domain !== domain) {
+      return res.status(403).json({ success: false, error: 'DOMAIN_MISMATCH', message: 'Token was issued for a different domain' });
+    }
+
     return res.json({
       success: true,
       verified: true,
@@ -232,7 +236,7 @@ app.post('/api/tracking/verify-cross-domain-token', (req, res) => {
         waiTag: decoded.waiTag,
         userId: decoded.userId || null
       },
-      domain,
+      domain: decoded.domain || domain,
       verifiedAt: new Date().toISOString(),
       message: 'Token verified'
     });
@@ -246,10 +250,23 @@ app.post('/api/tracking/verify-cross-domain-token', (req, res) => {
 });
 
 app.post('/api/tracking/generate-cross-domain-token', (req, res) => {
+  var apiKey = req.headers['x-api-key'];
+  if (!apiKey || apiKey !== (process.env.NYLO_API_KEY || NYLO_TOKEN_SECRET)) {
+    return res.status(401).json({
+      success: false,
+      error: 'UNAUTHORIZED',
+      message: 'Valid X-API-Key header is required to generate tokens'
+    });
+  }
+
   const { waiTag, sessionId, userId, destinationDomain } = req.body;
 
   if (!waiTag || !sessionId) {
     return res.status(400).json({ success: false, message: 'waiTag and sessionId are required' });
+  }
+
+  if (!destinationDomain) {
+    return res.status(400).json({ success: false, message: 'destinationDomain is required — tokens must be bound to a destination' });
   }
 
   const exp = Date.now() + 5 * 60 * 1000;
@@ -257,7 +274,7 @@ app.post('/api/tracking/generate-cross-domain-token', (req, res) => {
     waiTag,
     sessionId,
     userId: userId || null,
-    domain: destinationDomain || '',
+    domain: destinationDomain,
     exp
   };
   const dataToSign = JSON.stringify(tokenPayload);

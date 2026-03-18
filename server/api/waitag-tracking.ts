@@ -270,6 +270,14 @@ export function registerWaiTagTrackingRoutes(app: any, storage: WaiTagStorage) {
           });
         }
 
+        if (domain && payload.domain && payload.domain !== domain) {
+          return res.status(403).json({
+            success: false,
+            error: 'DOMAIN_MISMATCH',
+            message: 'Token was issued for a different domain'
+          });
+        }
+
         if (storage.tokenReplayStore) {
           const tokenHash = hashToken(token);
           const alreadyUsed = await storage.tokenReplayStore.isTokenUsed(tokenHash);
@@ -289,6 +297,7 @@ export function registerWaiTagTrackingRoutes(app: any, storage: WaiTagStorage) {
             sessionId: payload.sessionId,
             userId: payload.userId || null
           },
+          domain: payload.domain,
           verifiedAt: new Date().toISOString()
         });
       } catch {
@@ -306,24 +315,35 @@ export function registerWaiTagTrackingRoutes(app: any, storage: WaiTagStorage) {
 
   app.post("/api/tracking/generate-cross-domain-token", async (req: Request, res: Response) => {
     try {
+      const apiKey = req.headers['x-api-key'] as string;
+      if (!apiKey || apiKey !== process.env.NYLO_API_KEY) {
+        return res.status(401).json({
+          success: false,
+          error: 'UNAUTHORIZED',
+          message: 'Valid X-API-Key header is required to generate tokens'
+        });
+      }
+
       const { waiTag, sessionId, userId, destinationDomain } = req.body;
 
       if (!waiTag || !sessionId) {
         return res.status(400).json({ success: false, message: 'waiTag and sessionId are required' });
       }
 
+      if (!destinationDomain) {
+        return res.status(400).json({ success: false, message: 'destinationDomain is required — tokens must be bound to a destination' });
+      }
+
       const tokenSecret = process.env.NYLO_TOKEN_SECRET!;
 
-      if (storage.isDomainVerified && destinationDomain) {
-        const customerId = req.body.customerId ? parseInt(req.body.customerId) : 0;
-        if (customerId) {
-          const verified = await storage.isDomainVerified(destinationDomain, customerId);
-          if (!verified) {
-            return res.status(403).json({
-              success: false,
-              message: 'Destination domain not verified. Complete DNS verification first.'
-            });
-          }
+      const customerId = req.body.customerId ? parseInt(req.body.customerId) : 0;
+      if (storage.isDomainVerified && customerId) {
+        const verified = await storage.isDomainVerified(destinationDomain, customerId);
+        if (!verified) {
+          return res.status(403).json({
+            success: false,
+            message: 'Destination domain not verified. Complete DNS verification first.'
+          });
         }
       }
 
@@ -332,7 +352,7 @@ export function registerWaiTagTrackingRoutes(app: any, storage: WaiTagStorage) {
         waiTag,
         sessionId,
         userId: userId || null,
-        domain: destinationDomain || '',
+        domain: destinationDomain,
         exp
       };
       const dataToSign = JSON.stringify(tokenPayload);
