@@ -210,7 +210,13 @@ export function registerWaiTagTrackingRoutes(app: any, storage: WaiTagStorage) {
   /**
    * COMMERCIAL FEATURE: Cross-Domain Token Verification (WTX-1)
    * See COMMERCIAL-LICENSE for production use requirements.
+   * Routes are only registered if NYLO_TOKEN_SECRET is configured at startup.
    */
+  if (!process.env.NYLO_TOKEN_SECRET) {
+    console.error('[SECURITY] NYLO_TOKEN_SECRET not set at startup — cross-domain token endpoints will NOT be registered.');
+    console.error('[SECURITY] Set NYLO_TOKEN_SECRET environment variable to enable cross-domain features.');
+  } else {
+
   app.options("/api/tracking/verify-cross-domain-token", (req: Request, res: Response) => {
     const origin = req.headers.origin || '*';
     res.header('Access-Control-Allow-Origin', origin);
@@ -242,16 +248,7 @@ export function registerWaiTagTrackingRoutes(app: any, storage: WaiTagStorage) {
         }
       }
 
-      const tokenSecret = process.env.NYLO_TOKEN_SECRET;
-
-      if (!tokenSecret) {
-        console.error('[SECURITY] NYLO_TOKEN_SECRET not configured — cross-domain token verification is unavailable');
-        return res.status(503).json({
-          success: false,
-          error: 'SECRET_NOT_CONFIGURED',
-          message: 'NYLO_TOKEN_SECRET is not configured — cross-domain token verification is unavailable'
-        });
-      }
+      const tokenSecret = process.env.NYLO_TOKEN_SECRET!;
 
       try {
         const decoded = JSON.parse(Buffer.from(token, 'base64').toString('utf-8'));
@@ -266,7 +263,7 @@ export function registerWaiTagTrackingRoutes(app: any, storage: WaiTagStorage) {
 
         const { valid, payload } = verifyTokenSignature(token, tokenSecret);
         if (!valid) {
-          return res.json({
+          return res.status(403).json({
             success: false,
             error: 'INVALID_SIGNATURE',
             message: 'Invalid or expired cross-domain token'
@@ -315,14 +312,7 @@ export function registerWaiTagTrackingRoutes(app: any, storage: WaiTagStorage) {
         return res.status(400).json({ success: false, message: 'waiTag and sessionId are required' });
       }
 
-      const tokenSecret = process.env.NYLO_TOKEN_SECRET;
-      if (!tokenSecret) {
-        return res.status(503).json({
-          success: false,
-          error: 'SECRET_NOT_CONFIGURED',
-          message: 'NYLO_TOKEN_SECRET is not configured — cannot generate signed tokens'
-        });
-      }
+      const tokenSecret = process.env.NYLO_TOKEN_SECRET!;
 
       if (storage.isDomainVerified && destinationDomain) {
         const customerId = req.body.customerId ? parseInt(req.body.customerId) : 0;
@@ -364,6 +354,8 @@ export function registerWaiTagTrackingRoutes(app: any, storage: WaiTagStorage) {
       return res.status(500).json({ success: false, message: 'Server error' });
     }
   });
+
+  } // end if (NYLO_TOKEN_SECRET) — cross-domain endpoints
 
   app.post("/api/tracking/verify-waitag", async (req: Request, res: Response) => {
     try {

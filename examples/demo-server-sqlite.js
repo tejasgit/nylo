@@ -132,12 +132,12 @@ app.post('/api/tracking/verify-cross-domain-token', (req, res) => {
       return res.status(400).json({ success: false, error: 'INVALID_TOKEN', message: 'Token must contain waiTag and sessionId' });
     }
     if (decoded.exp && Date.now() > decoded.exp) {
-      return res.json({ success: false, error: 'TOKEN_EXPIRED', message: 'Token expired' });
+      return res.status(403).json({ success: false, error: 'TOKEN_EXPIRED', message: 'Token expired' });
     }
     const dataToSign = JSON.stringify({ waiTag: decoded.waiTag, sessionId: decoded.sessionId, userId: decoded.userId || null, domain: decoded.domain || '', exp: decoded.exp });
     const expectedSig = crypto.createHmac('sha256', NYLO_TOKEN_SECRET).update(dataToSign).digest('hex');
     if (decoded.sig.length !== expectedSig.length || !crypto.timingSafeEqual(Buffer.from(decoded.sig, 'hex'), Buffer.from(expectedSig, 'hex'))) {
-      return res.json({ success: false, error: 'INVALID_SIGNATURE', message: 'Invalid token signature' });
+      return res.status(403).json({ success: false, error: 'INVALID_SIGNATURE', message: 'Invalid token signature' });
     }
     return res.json({ success: true, verified: true, identity: { sessionId: decoded.sessionId, waiTag: decoded.waiTag, userId: decoded.userId || null }, domain, verifiedAt: new Date().toISOString(), message: 'Token verified' });
   } catch (e) {

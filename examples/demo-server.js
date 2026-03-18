@@ -207,7 +207,7 @@ app.post('/api/tracking/verify-cross-domain-token', (req, res) => {
     }
 
     if (decoded.exp && Date.now() > decoded.exp) {
-      return res.json({ success: false, error: 'TOKEN_EXPIRED', message: 'Token expired' });
+      return res.status(403).json({ success: false, error: 'TOKEN_EXPIRED', message: 'Token expired' });
     }
 
     const dataToSign = JSON.stringify({
@@ -221,7 +221,7 @@ app.post('/api/tracking/verify-cross-domain-token', (req, res) => {
 
     if (decoded.sig.length !== expectedSig.length ||
         !crypto.timingSafeEqual(Buffer.from(decoded.sig, 'hex'), Buffer.from(expectedSig, 'hex'))) {
-      return res.json({ success: false, error: 'INVALID_SIGNATURE', message: 'Invalid token signature' });
+      return res.status(403).json({ success: false, error: 'INVALID_SIGNATURE', message: 'Invalid token signature' });
     }
 
     return res.json({
