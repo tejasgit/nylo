@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * SDK-to-server partial-failure contract tests.
  *
@@ -118,6 +119,8 @@ test('SDK sendBatch consumes per-event results: retries storage errors, drops re
   });
 
   const nylo = loadSdk(sandbox);
+  // The SDK is fail-closed: sendBatch is a no-op until consent is granted.
+  nylo.grantConsent();
   nylo.queueTestEvents([
     { eventId: 'a'.repeat(32), eventType: 'page_view', sessionId: 's', domain: 'd' },
     { eventId: 'b'.repeat(32), eventType: 'click', sessionId: 's', domain: 'd' },
@@ -226,7 +229,8 @@ function loadSdk(sandbox) {
     },
     queueSizes: function() {
       return { eventQueue: state.eventQueue.length, retryQueue: state.retryQueue.length };
-    }
+    },
+    grantConsent: function() { state.consent = 'granted'; }
   };
   `;
   const lastClose = source.lastIndexOf('})();');

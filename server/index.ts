@@ -1,4 +1,6 @@
 /**
+ * SPDX-License-Identifier: MIT
+ *
  * Nylo Server — Express.js Integration Entry Point
  *
  * This file shows how to integrate Nylo tracking into an Express.js server.

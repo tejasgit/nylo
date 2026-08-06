@@ -1,8 +1,12 @@
 /**
+ * SPDX-License-Identifier: LicenseRef-Nylo-Commercial
+ *
  * Nylo WaiTag Tracking API — Identity Registration & Cross-Domain Verification
  *
  * Copyright (c) 2024-2026 Nylo Contributors
- * Licensed under MIT License (see LICENSE)
+ * Licensed under the Nylo Commercial License (see COMMERCIAL-LICENSE).
+ * Free for personal, academic, and evaluation use; commercial production
+ * use requires a commercial license. See LICENSING.md.
  *
  * COMMERCIAL NOTICE: Cross-domain token verification endpoints are part of
  * the WTX-1 protocol covered by COMMERCIAL-LICENSE.

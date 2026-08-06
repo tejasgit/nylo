@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * Shared fail-closed CORS middleware for the Nylo demo servers.
  *

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * Nylo PostgreSQL Storage Adapter — Reference Implementation
  *

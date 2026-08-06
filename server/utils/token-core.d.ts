@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LicenseRef-Nylo-Commercial
 export const TOKEN_VERSION: number;
 export const DEFAULT_TTL_MS: number;
 

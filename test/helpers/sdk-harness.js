@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * Minimal DOM stub harness that loads src/nylo.js into a vm sandbox so
  * consent transitions, storage deletion and fail-closed behavior can be

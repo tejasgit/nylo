@@ -1,4 +1,6 @@
 /**
+ * SPDX-License-Identifier: LicenseRef-Nylo-Commercial
+ *
  * Nylo Cross-Domain Token Core (WTX-1)
  *
  * Signed, versioned, replay-resistant cross-domain tokens.
@@ -6,7 +8,9 @@
  * tenantId, sourceDomain and destinationDomain.
  *
  * Copyright (c) 2024-2026 Nylo Contributors
- * Licensed under MIT License (see LICENSE)
+ * Licensed under the Nylo Commercial License (see COMMERCIAL-LICENSE).
+ * Free for personal, academic, and evaluation use; commercial production
+ * use requires a commercial license. See LICENSING.md.
  *
  * COMMERCIAL NOTICE: part of the WTX-1 protocol covered by COMMERCIAL-LICENSE.
  */

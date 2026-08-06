@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import express from 'express';
 import path from 'path';
 import { setupNyloRoutes } from '../server';

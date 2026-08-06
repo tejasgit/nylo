@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * Nylo SQLite Storage Adapter — Reference Implementation
  *

@@ -1,12 +1,14 @@
 # WTX-1: Privacy Analysis of Cross-Domain Context Preservation via Hash Fragment Transport
 
+> License: This document is released under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+
 **Submitted to:** PEARG (Privacy Enhancements and Assessments Research Group)
 **Mailing list:** pearg@ietf.org
 **Authors:** Ravi Teja Surampudi (Nylo Project)
 **Date:** 2026-03-02
 **Internet-Draft:** [draft-surampudi-wtx1-01](https://datatracker.ietf.org/doc/draft-surampudi-wtx1/)
 **Protocol specification:** [WTX-1-SPEC.md](https://github.com/tejasgit/wtx-1)
-**Reference implementation:** [Nylo SDK](https://github.com/tejasgit/nylo) (MIT License)
+**Reference implementation:** [Nylo SDK](https://github.com/tejasgit/nylo) (dual-licensed: MIT core, commercial license for cross-domain identity features — see LICENSING.md in the repository)
 
 ---
 
@@ -33,7 +35,7 @@ WTX-1 (WaiTag Transfer Protocol, version 1) preserves pseudonymous visitor conte
 
 **Core components:**
 
-1. **WaiTag identifiers** — Pseudonymous identifiers generated client-side using `crypto.getRandomValues()` with 128 bits of cryptographic entropy. Format: `wai_<random>_<domain_hash>`. No PII, device signals, or derivable real-world identity is encoded.
+1. **WaiTag identifiers** — Pseudonymous identifiers generated client-side using `crypto.getRandomValues()` with 128 bits of cryptographic entropy. Format: `wai_<random>_<domain_hash>`. No direct identifiers, device signals, or derivable real-world identity is encoded; the identifier is pseudonymous, not anonymous.
 
 2. **DNS domain authorization** — Participating domains must publish DNS TXT records to authorize cross-domain identity sharing. Only explicitly authorized domain pairs can exchange tokens.
 

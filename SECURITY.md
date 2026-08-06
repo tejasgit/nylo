@@ -53,8 +53,10 @@ Nylo implements the following security measures:
 ### Data Handling
 - No IP addresses are stored
 - User agents are hashed, not stored in plain text
-- No cookies are required for core functionality
-- Three-layer storage (cookie, localStorage, sessionStorage) with graceful degradation
+- No third-party cookies are used; a **first-party cookie (`nylo_wai`)** is set for local identity persistence once consent is granted
+- Identifiers (WaiTags) are **pseudonymous, not anonymous** — they are personal data under GDPR-style regimes, and `Nylo.identify()` can link them to an application-level user ID
+- Fail-closed consent gating: no tracking, storage, or cross-domain sync occurs before `Nylo.setConsent({ analytics: true })`
+- Three-layer storage (first-party cookie, localStorage, sessionStorage) with graceful degradation
 
 ### Network Security
 - CORS headers are configured per-origin (not wildcard in production)

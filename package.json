@@ -1,7 +1,7 @@
 {
   "name": "nylo",
   "version": "1.0.0",
-  "description": "Privacy-first cross-domain analytics SDK. No cookies, no fingerprinting, no PII.",
+  "description": "Experimental privacy-first cross-domain analytics SDK. No third-party cookies, no fingerprinting, no direct identifiers collected by default (pseudonymous). Dual-licensed: MIT core + commercially licensed cross-domain features.",
   "main": "src/nylo.js",
   "types": "server/index.ts",
   "files": [
@@ -10,6 +10,7 @@
     "shared/",
     "LICENSE",
     "COMMERCIAL-LICENSE",
+    "LICENSING.md",
     "README.md"
   ],
   "scripts": {
@@ -26,11 +27,10 @@
     "sdk",
     "web-analytics",
     "identity-resolution",
-    "cookie-free",
-    "gdpr"
+    "consent"
   ],
   "author": "Nylo Contributors",
-  "license": "MIT",
+  "license": "SEE LICENSE IN LICENSING.md",
   "homepage": "https://github.com/tejasgit/nylo#readme",
   "repository": {
     "type": "git",

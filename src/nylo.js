@@ -1,13 +1,15 @@
 /**
+ * SPDX-License-Identifier: LicenseRef-Nylo-Dual
+ *
  * Nylo Analytics SDK v1.0.0
  * Privacy-first cross-domain analytics tracking
  *
  * Copyright (c) 2024-2026 Nylo Contributors
- * Licensed under MIT License (see LICENSE)
- *
- * COMMERCIAL NOTICE: Cross-domain identity features (WTX-1 protocol,
- * WaiTag system, encrypted configuration) require a commercial license
- * for production use. See COMMERCIAL-LICENSE for details.
+ * Dual-licensed: core tracking under the MIT License (see LICENSE);
+ * cross-domain identity modules (CrossDomainIdentity, WaiTag generation,
+ * encrypted configuration parsing) under the Nylo Commercial License
+ * (see COMMERCIAL-LICENSE). Commercial production use of the cross-domain
+ * features requires a commercial license. See LICENSING.md for the boundary.
  *
  * @see https://github.com/tejasgit/nylo
  */

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 const express = require('express');
 const crypto = require('crypto');
 const path = require('path');

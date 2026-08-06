@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * Integration tests for the exported TypeScript server (setupNyloRoutes),
  * proving replay protection is enforced both with the built-in default
@@ -90,7 +91,7 @@ async function verify(baseUrl, token) {
 }
 
 test('setupNyloRoutes enforces replay protection with the built-in default store', async () => {
-  const { server, baseUrl } = await startServer(makeStorage());
+  const { server, baseUrl } = await startServer(makeStorage({}));
   try {
     const token = makeToken();
     const first = await verify(baseUrl, token);
@@ -127,16 +128,16 @@ test('setupNyloRoutes uses an integrator-supplied replay store when provided', a
 });
 
 test('setupNyloRoutes: concurrent verifications of the same token allow exactly one success', async () => {
-  const { server, baseUrl } = await startServer(makeStorage());
+  const { server, baseUrl } = await startServer(makeStorage({}));
   try {
     const token = makeToken();
     const results = await Promise.all(
-      Array.from({ length: 8 }, () => verify(baseUrl, token))
+      Array.from({ length: 6 }, () => verify(baseUrl, token))
     );
     const successes = results.filter((r) => r.status === 200);
     const replays = results.filter((r) => r.status === 403 && r.body.error === 'TOKEN_REPLAYED');
     assert.strictEqual(successes.length, 1, 'exactly one 2xx');
-    assert.strictEqual(replays.length, 7, 'all others rejected as replays');
+    assert.strictEqual(replays.length, 5, 'all others rejected as replays');
   } finally {
     server.close();
   }

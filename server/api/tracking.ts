@@ -1,4 +1,6 @@
 /**
+ * SPDX-License-Identifier: MIT
+ *
  * Nylo Tracking API — Batch Event Ingestion
  *
  * Copyright (c) 2024-2026 Nylo Contributors

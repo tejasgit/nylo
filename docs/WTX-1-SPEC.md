@@ -11,7 +11,7 @@
 
 ## Abstract
 
-WTX-1 (WaiTag Transfer Protocol, version 1) defines a method for preserving pseudonymous user context across unrelated web domains without third-party cookies, browser fingerprinting, login requirements, or personal data collection. The protocol uses cryptographically generated pseudonymous identifiers (WaiTags), URL hash fragment transport, server-side verification, and DNS-based domain authorization to enable privacy-respecting cross-domain analytics.
+WTX-1 (WaiTag Transfer Protocol, version 1) defines a method for preserving pseudonymous user context across unrelated web domains without third-party cookies, browser fingerprinting, login requirements, or collection of direct identifiers. The protocol uses cryptographically generated pseudonymous identifiers (WaiTags) — pseudonymous, not anonymous: under regulations such as the GDPR, persistent pseudonymous identifiers are generally personal data and consent obligations continue to apply, URL hash fragment transport, server-side verification, and DNS-based domain authorization to enable privacy-respecting cross-domain analytics.
 
 ---
 
@@ -46,7 +46,7 @@ When a user navigates from `hospital-a.com` to `pharmacy-b.com`, or from `bank.c
 WTX-1 is designed to:
 
 1. Preserve visitor context across unrelated domains (different eTLD+1)
-2. Never collect, transmit, or derive personal information
+2. Never collect, transmit, or derive direct identifiers (name, email, IP address, device fingerprints); identifiers remain pseudonymous unless the implementer links them via an application-level `identify()` call
 3. Work without third-party cookies, fingerprinting, or login (first-party cookies are used only for local identity persistence, not for cross-domain token transport)
 4. Resist tracking by unauthorized third parties
 5. Degrade gracefully when consent is denied
@@ -58,7 +58,7 @@ WTX-1 is designed to:
 
 | Term | Definition |
 |------|-----------|
-| **WaiTag** | A pseudonymous identifier generated per-visitor using cryptographic randomness. Format: `wai_<timestamp_b36>_<random><domain_hash>`. Contains no PII. |
+| **WaiTag** | A pseudonymous identifier generated per-visitor using cryptographic randomness. Format: `wai_<timestamp_b36>_<random><domain_hash>`. Contains no direct identifiers; pseudonymous, not anonymous. |
 | **Origin Domain** | The domain where the user's session begins and the WaiTag is generated. |
 | **Destination Domain** | The domain the user navigates to, which receives and verifies the WaiTag. |
 | **Cross-Domain Token** | A time-limited, server-signed token encoding the WaiTag for transfer between domains. |
@@ -163,8 +163,8 @@ wai_0g0e161m0a0i0r0b0h0_1a2b3c4d
 
 ### 4.3 Properties
 
-- **Not reversible** — No component can be reversed to identify a person
-- **Not derived from PII** — No personal information is used as input
+- **Not reversible on its own** — No component can be reversed to identify a person absent an external mapping (e.g., one created via `identify()`)
+- **Not derived from direct identifiers** — No personal information is used as input; the WaiTag is nonetheless pseudonymous, not anonymous, because it persists and singles out a browser
 - **Domain-scoped** — The domain hash binds the WaiTag to its origin, but the hash is one-way and cannot reveal the domain to a third party
 - **Collision-resistant** — 64 bits of cryptographic randomness provides sufficient uniqueness for analytics use cases
 
@@ -172,7 +172,7 @@ wai_0g0e161m0a0i0r0b0h0_1a2b3c4d
 
 - It is not a fingerprint (no hardware/software signals are used)
 - It is not a cookie (it does not use the `Set-Cookie` / `Cookie` HTTP mechanism for cross-domain transfer; a first-party cookie is used only as a local storage fallback)
-- It is not PII (it cannot identify a natural person)
+- It does not contain direct identifiers (it cannot by itself identify a natural person; as a persistent pseudonymous identifier it may still be classified as personal data under GDPR-style regimes)
 - It is not deterministic (the same user on the same device will get different WaiTags across sessions unless identity is restored)
 
 ---
@@ -591,7 +591,7 @@ A captured token that is not immediately verified becomes useless within 5 minut
 **4. Tokens contain only pseudonymous data**
 
 Even if an extension successfully intercepts and verifies a token, it obtains only:
-- A WaiTag (pseudonymous identifier with no PII)
+- A WaiTag (pseudonymous identifier containing no direct identifiers)
 - A session ID (random string)
 - An optional application-level user ID
 - The origin domain name
@@ -745,7 +745,7 @@ All cross-domain tokens MUST be signed with HMAC-SHA256 using a server-side secr
 
 ### 10.1 Pseudonymous Identifiers and GDPR
 
-Under GDPR, pseudonymous identifiers are considered personal data when they can be attributed to a natural person using additional information (Article 4(5)). WaiTags are pseudonymous — they contain no PII, but an organization could theoretically maintain a separate mapping table linking WaiTags to real identities.
+Under GDPR, pseudonymous identifiers are considered personal data when they can be attributed to a natural person using additional information (Article 4(5)). WaiTags are pseudonymous personal data — they contain no direct identifiers, but an organization can maintain a mapping linking WaiTags to real identities; the reference implementation's `identify()` API creates such a linkage when called, and the linked data must then be treated as fully personal data with an appropriate lawful basis.
 
 WTX-1 does not define or require such a mapping. Implementors who create such mappings take on the full obligations of a GDPR data controller, including lawful basis, data subject rights, and data protection impact assessments.
 
@@ -861,7 +861,7 @@ Sites can adopt WTX-1 incrementally:
 
 ### Reference Implementation
 
-- [Nylo SDK](https://github.com/tejasgit/nylo) — MIT License
+- [Nylo SDK](https://github.com/tejasgit/nylo) — dual-licensed (MIT core; cross-domain identity features under a commercial license — see the repository's LICENSING.md; licensing boundary provisional pending attorney review)
 - [WTX-1 Protocol Repository](https://github.com/tejasgit/wtx-1)
 
 ---

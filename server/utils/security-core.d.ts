@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 export function isValidDomainName(domain: string): boolean;
 export function hostMatchesPattern(host: string, pattern: string): boolean;
 export function originAllowed(

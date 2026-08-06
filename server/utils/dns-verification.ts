@@ -1,4 +1,6 @@
 /**
+ * SPDX-License-Identifier: LicenseRef-Nylo-Commercial
+ *
  * DNS-Based Domain Ownership Verification
  *
  * Verifies domain ownership by checking for a specific TXT record in DNS.
@@ -11,7 +13,9 @@
  * 4. If the token matches, domain is marked as verified
  *
  * Copyright (c) 2024-2026 Nylo Contributors
- * Licensed under MIT License (see LICENSE)
+ * Licensed under the Nylo Commercial License (see COMMERCIAL-LICENSE).
+ * Free for personal, academic, and evaluation use; commercial production
+ * use requires a commercial license. See LICENSING.md.
  */
 
 import dns from 'dns';

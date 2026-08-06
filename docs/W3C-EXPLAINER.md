@@ -1,12 +1,14 @@
 # WTX-1: Cross-Domain Context Preservation Protocol
 
+> License: This document is released under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+
 A Proposal of the [Privacy Community Group](https://privacycg.github.io/).
 
 **Authors:** Ravi Teja Surampudi (Nylo Project)
 
 **Specification:** [IETF Internet-Draft: draft-surampudi-wtx1-00](https://datatracker.ietf.org/doc/draft-surampudi-wtx1/)
 
-**Reference Implementation:** [github.com/tejasgit/nylo](https://github.com/tejasgit/nylo) (MIT License)
+**Reference Implementation:** [github.com/tejasgit/nylo](https://github.com/tejasgit/nylo) (dual-licensed: MIT core, commercial license for cross-domain identity features — see LICENSING.md in the repository)
 
 **Protocol Specification:** [github.com/tejasgit/wtx-1](https://github.com/tejasgit/wtx-1)
 
@@ -74,7 +76,7 @@ The protocol is designed to work within existing web platform constraints — it
 
 1. **Replacing third-party cookies for advertising** — WTX-1 is not designed for ad targeting, real-time bidding, or cross-publisher audience building. It is scoped to first-party analytics across domains under common administrative control.
 
-2. **User identification** — WTX-1 does not identify users. WaiTags are pseudonymous and contain no PII. The protocol does not define or require a mapping between WaiTags and real-world identities.
+2. **User identification** — WTX-1 does not identify users. WaiTags are pseudonymous and contain no direct identifiers. The protocol does not define or require a mapping between WaiTags and real-world identities, although an implementer's application-level `identify()` call can create one (making the linked data personal data requiring a lawful basis).
 
 3. **Cross-browser identity** — WTX-1 operates within a single browser instance. It does not attempt to correlate identities across different browsers or devices.
 
@@ -117,7 +119,7 @@ wai_[timestamp-hex]_[random-hex]_[checksum]
 **Generation requirements:**
 - Random component MUST use `crypto.getRandomValues()` (Web Cryptography API)
 - Minimum 128 bits of entropy in the random component
-- No PII, device signals, or derivable real-world identity encoded
+- No direct identifiers, device signals, or derivable real-world identity encoded (the identifier remains pseudonymous personal data)
 - Stored in `localStorage` (primary), with `sessionStorage` and cookie fallbacks
 
 **Example:** `wai_18d4f2a1b3c_a7f2e9d1c4b8_3k`
@@ -302,13 +304,13 @@ WaiTags are stored using a three-layer strategy for resilience:
 2. **Secondary:** `sessionStorage` — survives page reloads within a session
 3. **Tertiary:** First-party cookie (HttpOnly where possible) — fallback for contexts where Web Storage is unavailable
 
-All stored data is obfuscated (not encrypted) to prevent casual inspection. No PII is ever stored.
+All stored data is obfuscated (not encrypted) to prevent casual inspection. No direct identifiers are stored; the stored WaiTag is pseudonymous personal data.
 
 ## Privacy Considerations
 
 ### Pseudonymous Identifiers and GDPR
 
-Under GDPR, pseudonymous identifiers are considered personal data when they can be attributed to a natural person using additional information (Article 4(5)). WaiTags are pseudonymous — they contain no PII, but an organization could theoretically maintain a separate mapping table linking WaiTags to real identities.
+Under GDPR, pseudonymous identifiers are considered personal data when they can be attributed to a natural person using additional information (Article 4(5)). WaiTags are pseudonymous personal data — they contain no direct identifiers, but implementers should treat them as personal data: an organization can maintain a mapping linking WaiTags to real identities, and the reference implementation's `identify()` API creates exactly such a linkage when called.
 
 **Protocol position:** WTX-1 does not define or require such a mapping. Implementors who create such mappings take on the full obligations of a GDPR data controller, including lawful basis, data subject rights, and data protection impact assessments.
 
@@ -377,7 +379,7 @@ Implementations SHOULD provide users with:
 **Why WTX-1 differs:**
 - Server-side stitching is probabilistic and inaccurate
 - It often involves PII (IP addresses are personal data under GDPR)
-- WTX-1 provides deterministic, consent-gated identity with no PII
+- WTX-1 provides deterministic, consent-gated pseudonymous identity without direct identifiers
 
 ### 4. Federated Credential Management (FedCM)
 

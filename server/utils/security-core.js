@@ -1,4 +1,6 @@
 /**
+ * SPDX-License-Identifier: MIT
+ *
  * Nylo Security Core — pure, dependency-free helpers shared by the
  * TypeScript server modules, the demo server, and the unit tests.
  *

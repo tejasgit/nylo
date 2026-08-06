@@ -11,7 +11,7 @@
         This document defines the WTX-1 (WaiTag Transfer Protocol,
         version 1) for preserving pseudonymous user context across
         unrelated web domains without third-party cookies, browser
-        fingerprinting, login requirements, or personal data collection.
+        fingerprinting, login requirements, or collection of direct identifiers.
         The protocol uses cryptographically generated pseudonymous
         identifiers (WaiTags), URL hash fragment transport, server-side
         verification, and DNS-based domain authorization to enable
@@ -1267,7 +1267,7 @@ li > p:last-of-type:only-child {
         This document defines the WTX-1 (WaiTag Transfer Protocol,
         version 1) for preserving pseudonymous user context across
         unrelated web domains without third-party cookies, browser
-        fingerprinting, login requirements, or personal data collection.
+        fingerprinting, login requirements, or collection of direct identifiers.
         The protocol uses cryptographically generated pseudonymous
         identifiers (WaiTags), URL hash fragment transport, server-side
         verification, and DNS-based domain authorization to enable
@@ -1516,7 +1516,8 @@ li > p:last-of-type:only-child {
 <ol start="1" type="1" class="normal type-1" id="section-1-5">
         <li id="section-1-5.1">Preserves visitor context across unrelated domains<a href="#section-1-5.1" class="pilcrow">¶</a>
 </li>
-        <li id="section-1-5.2">Never collects, transmits, or derives personal information<a href="#section-1-5.2" class="pilcrow">¶</a>
+        <li id="section-1-5.2">Never collects, transmits, or derives direct identifiers; the
+       WaiTag itself remains pseudonymous (personal data under GDPR)<a href="#section-1-5.2" class="pilcrow">¶</a>
 </li>
         <li id="section-1-5.3">Works without cookies, fingerprinting, or login<a href="#section-1-5.3" class="pilcrow">¶</a>
 </li>
@@ -1554,7 +1555,7 @@ li > p:last-of-type:only-child {
           A pseudonymous identifier generated per-visitor using
           cryptographic randomness. Format:
           wai_&lt;timestamp_b36&gt;_&lt;random&gt;&lt;domain_hash&gt;.
-          Contains no personally identifiable information (PII).<a href="#section-2-1.2" class="pilcrow">¶</a>
+          Contains no directly identifiable information (PII).<a href="#section-2-1.2" class="pilcrow">¶</a>
 </dd>
         <dd class="break"></dd>
 <dt id="section-2-1.3">Origin Domain</dt>
@@ -2197,7 +2198,8 @@ _nylo-verify.example.com. IN TXT
           Data stored in localStorage SHOULD be encoded with a
           customer-specific salt and timestamp to prevent casual
           inspection. This is obfuscation, not cryptographic security.
-          The stored data contains no PII regardless of encoding.<a href="#section-8.4-1" class="pilcrow">¶</a></p>
+          The stored data contains no direct identifiers regardless of encoding; the identifier
+   remains pseudonymous personal data.<a href="#section-8.4-1" class="pilcrow">¶</a></p>
 </section>
 </div>
 </section>
@@ -2431,7 +2433,8 @@ _nylo-verify.example.com. IN TXT
 <a href="#section-12.1" class="section-number selfRef">12.1. </a><a href="#name-core-privacy-commitments" class="section-name selfRef">Core Privacy Commitments</a>
 </h3>
 <ol start="1" type="1" class="normal type-1">
-<li>No PII collection: The protocol never collects, transmits, or derives personal information such as names, email addresses, phone numbers, or physical addresses.</li>
+<li>No direct-identifier collection: The protocol never collects,
+       transmits, or derives personal information such as names, email addresses, phone numbers, or physical addresses.</li>
 <li>No fingerprinting: No hardware, software, or behavioral signals (screen resolution, installed fonts, GPU rendering, etc.) are used to generate or correlate identifiers.</li>
 <li>No third-party cookies: Cross-domain identity does not use the Set-Cookie/Cookie HTTP mechanism for cross-domain transfer.</li>
 <li>No login required: Identity preservation works for anonymous visitors without requiring authentication or account creation.</li>

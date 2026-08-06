@@ -44,7 +44,7 @@
         This document defines the WTX-1 (WaiTag Transfer Protocol,
         version 1) for preserving pseudonymous user context across
         unrelated web domains without third-party cookies, browser
-        fingerprinting, login requirements, or personal data collection.
+        fingerprinting, login requirements, or collection of direct identifiers.
         The protocol uses cryptographically generated pseudonymous
         identifiers (WaiTags), URL hash fragment transport, server-side
         verification, and DNS-based domain authorization to enable
@@ -95,7 +95,8 @@
 
       <ol>
         <li>Preserves visitor context across unrelated domains</li>
-        <li>Never collects, transmits, or derives personal information</li>
+        <li>Never collects, transmits, or derives direct identifiers; the
+       WaiTag itself remains pseudonymous (personal data under GDPR)</li>
         <li>Works without cookies, fingerprinting, or login</li>
         <li>Resists tracking by unauthorized third parties via DNS-based domain authorization</li>
         <li>Degrades gracefully when consent is denied</li>
@@ -125,7 +126,7 @@
           A pseudonymous identifier generated per-visitor using
           cryptographic randomness. Format:
           wai_&lt;timestamp_b36&gt;_&lt;random&gt;&lt;domain_hash&gt;.
-          Contains no personally identifiable information (PII).
+          Contains no directly identifiable information (PII).
         </dd>
 
         <dt>Origin Domain</dt>
@@ -589,7 +590,8 @@ _nylo-verify.example.com. IN TXT
           Data stored in localStorage SHOULD be encoded with a
           customer-specific salt and timestamp to prevent casual
           inspection. This is obfuscation, not cryptographic security.
-          The stored data contains no PII regardless of encoding.
+          The stored data contains no direct identifiers regardless of encoding; the identifier
+   remains pseudonymous personal data.
         </t>
       </section>
     </section>
@@ -762,7 +764,8 @@ _nylo-verify.example.com. IN TXT
       <section>
         <name>Core Privacy Commitments</name>
         <ol>
-          <li>No PII collection: The protocol never collects, transmits, or derives personal information such as names, email addresses, phone numbers, or physical addresses.</li>
+          <li>No direct-identifier collection: The protocol never collects,
+       transmits, or derives personal information such as names, email addresses, phone numbers, or physical addresses.</li>
           <li>No fingerprinting: No hardware, software, or behavioral signals (screen resolution, installed fonts, GPU rendering, etc.) are used to generate or correlate identifiers.</li>
           <li>No third-party cookies: Cross-domain identity does not use the Set-Cookie/Cookie HTTP mechanism for cross-domain transfer.</li>
           <li>No login required: Identity preservation works for anonymous visitors without requiring authentication or account creation.</li>

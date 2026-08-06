@@ -1,30 +1,35 @@
 <p align="center">
   <strong>Nylo</strong><br>
-  Privacy-first cross-domain analytics. No third party cookies. No login. No PII.
+  Privacy-first cross-domain analytics. No third-party cookies. No login. No direct identifiers collected by default.
 </p>
 
 <p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
+  <a href="LICENSING.md"><img src="https://img.shields.io/badge/license-MIT%20%2B%20Commercial-blue.svg" alt="Dual License"></a>
+  <img src="https://img.shields.io/badge/status-experimental-orange" alt="Experimental">
   <img src="https://img.shields.io/badge/dependencies-0-brightgreen" alt="Zero dependencies">
   <img src="https://img.shields.io/badge/client_SDK-~12KB-green" alt="SDK size">
 </p>
 
 ---
 
+> **⚠️ Experimental / pre-alpha.** Nylo is under active development and has not completed its security and compliance hardening backlog. Do not use it in production, especially in regulated environments, until a stable release is published.
+
+---
+
 Google killed third-party cookies. Your cross-domain analytics broke. The industry says you have two options: force users to log in (UID 2.0, LiveRamp) or lose individual-level data (Google Topics API).
 
-**Nylo is a third option.** It tracks user behavior across your domains using pseudonymous identifiers that never resolve to personal information. No third party cookies, no fingerprinting, no PII. Individual-level resolution without knowing who anyone is.
+**Nylo is a third option.** It tracks user behavior across your domains using pseudonymous identifiers. No third-party cookies, no fingerprinting, and no direct identifiers (name, email, IP address) collected by default. Note that pseudonymous identifiers are still considered personal data under regulations such as the GDPR — pseudonymous is not anonymous — so consent and compliance obligations still apply.
 
 ## What Nylo Is / Is Not
 
 | | |
 |---|---|
-| **Is** | Pseudonymous continuity across domains without login or PII |
+| **Is** | Pseudonymous continuity across domains without login or direct identifiers |
 | **Is** | A zero-dependency client SDK (~12KB) with server-side event ingestion |
-| **Is** | Privacy-by-design: all 23 tracking features default to **off** |
+| **Is** | Privacy-by-design: all 23 event-tracking features default to **off**, and nothing runs until you call `Nylo.setConsent({ analytics: true })`. Note: once consent is granted, the SDK establishes and persists a pseudonymous WaiTag and processes incoming cross-domain tokens even if no event features are enabled |
 | **Is not** | Fingerprinting users (no canvas, font, WebGL, or device fingerprints) |
-| **Is not** | Storing IP addresses or resolving identity to a person |
-| **Is not** | A replacement for consent — it reduces the *need* for it |
+| **Is not** | Storing IP addresses or resolving identity to a person by default (`identify()` can link a user ID — see below) |
+| **Is not** | A replacement for consent — pseudonymous identifiers are personal data under GDPR, and Nylo is fail-closed: it does not track without explicit consent |
 | **Works best when** | You control the collection server and verify domains via DNS TXT |
 | **Works best when** | You need cross-domain analytics without forcing user login |
 
@@ -41,10 +46,10 @@ User visits site-a.com        User clicks to site-b.com
         |                              |
         v                              v
    Same pseudonymous ID on both domains
-   No PII. No login. No third-party cookies.
+   No direct identifiers. No login. No third-party cookies.
 ```
 
-The SDK generates a **WaiTag** -- a pseudonymous identifier built from a timestamp, cryptographic random bytes, and a one-way domain hash. It contains zero personal information and cannot be reverse-engineered to identify anyone. When a user navigates between your domains, a secure token exchange preserves the identifier so you get unified analytics across properties.
+The SDK generates a **WaiTag** -- a pseudonymous identifier built from a timestamp, cryptographic random bytes, and a one-way domain hash. No personal information is used as an input, and the identifier cannot on its own be reverse-engineered to a person. It is **pseudonymous, not anonymous**: it persists across sessions (via a first-party cookie, localStorage, and sessionStorage), and if you call `Nylo.identify()` it becomes linked to your application-level user ID. When a user navigates between your domains, a secure token exchange preserves the identifier so you get unified analytics across properties.
 
 ## Quick Start
 
@@ -54,7 +59,13 @@ The SDK generates a **WaiTag** -- a pseudonymous identifier built from a timesta
 <script src="https://your-server.com/nylo.js" data-customer-id="1" async></script>
 ```
 
-That's it. The SDK initializes automatically and starts tracking page views and clicks.
+The SDK initializes automatically but is **fail-closed**: no events are tracked, no identifiers are stored, and no cross-domain sync occurs until consent is granted:
+
+```javascript
+Nylo.setConsent({ analytics: true });
+```
+
+After consent is granted, the SDK (a) generates/restores and persists the pseudonymous WaiTag, registers it with your server, and processes incoming cross-domain tokens — this identity layer is active regardless of feature toggles — and (b) tracks only the event types you enable via feature configuration (all 23 default off).
 
 ### 2. Use the API
 
@@ -66,6 +77,9 @@ Nylo.trackConversion('purchase', 49.99);
 Nylo.getSession();
 // { sessionId, waiTag, userId, customerId, queueSize, crossDomainSynced }
 
+// identify() links the pseudonymous WaiTag to YOUR user ID. After this call the
+// identifier is no longer merely pseudonymous from your perspective — the linked
+// data is personal data and requires an appropriate lawful basis. Requires consent.
 Nylo.identify('user-123');
 
 Nylo.flush();
@@ -127,7 +141,7 @@ npx tsx examples/server.ts
 
 ## What Gets Tracked
 
-23 event types, each individually toggled. All default to **off** (privacy by design):
+23 event types, each individually toggled. All 23 default to **off**, and nothing is tracked until explicit consent is granted via `Nylo.setConsent({ analytics: true })` (fail-closed by design). Note that the `trackCrossDomain` toggle gates cross-domain *event reporting* only — once consent is granted, WaiTag identity persistence and cross-domain token verification are active independently of these feature toggles:
 
 | Category | Events |
 |----------|--------|
@@ -166,6 +180,11 @@ nylo/
 │   ├── storage-postgres.js        # PostgreSQL reference storage adapter
 │   ├── basic.html                 # Minimal client-side integration
 │   └── server.ts                  # TypeScript Express server example
+├── docs/
+│   ├── WTX-1-SPEC.md              # WTX-1 protocol specification
+│   ├── RFC-0001.md                # Draft RFC
+│   ├── W3C-EXPLAINER.md           # W3C-format explainer
+│   └── ietf/                      # IETF Internet-Draft files
 ├── LICENSE                        # MIT License
 ├── COMMERCIAL-LICENSE             # Commercial License for cross-domain features
 ├── LICENSING.md                   # MIT vs commercial scope breakdown
@@ -183,14 +202,14 @@ nylo/
 
 ### Privacy Properties
 
-The WaiTag identifier satisfies four structural privacy guarantees:
+The WaiTag identifier is **pseudonymous** and satisfies four structural properties:
 
-1. **PII absence** -- No component derived from personal information. Random entropy from Web Crypto API.
-2. **Non-reversibility** -- No server-side mapping to personal identity. Cannot be linked to a person.
-3. **Behavioral consistency** -- Persists across sessions via three-layer storage hierarchy.
+1. **No direct identifiers as input** -- No component is derived from personal information. Random entropy comes from the Web Crypto API.
+2. **Non-reversibility by default** -- Nylo maintains no server-side mapping to a personal identity. Calling `Nylo.identify()` creates such a linkage; disclose it and secure a lawful basis before using it.
+3. **Behavioral consistency** -- Persists across sessions via a three-layer storage hierarchy (first-party cookie `nylo_wai`, localStorage, sessionStorage). Because it persists and singles out a browser, it is personal data under GDPR-style regimes.
 4. **Unilateral deletion** -- Clearing browser storage destroys the identifier. No server coordination needed.
 
-No IP addresses are stored. User agents are hashed. All strings are sanitized and length-limited.
+No IP addresses are stored. User agents are hashed. All strings are sanitized and length-limited. Nylo does not reduce your consent obligations — obtain consent where the law requires it; the SDK will not track until you signal consent via `Nylo.setConsent()`.
 
 ## Domain Verification
 
@@ -281,7 +300,7 @@ See [SECURITY.md](SECURITY.md) for our security policy and how to report vulnera
 
 ## License
 
-Nylo is dual-licensed. See [LICENSING.md](LICENSING.md) for the full breakdown of what's free vs commercial.
+Nylo is **dual-licensed** — the package as a whole is *not* plain MIT. Every source file carries an SPDX header identifying its license. See [LICENSING.md](LICENSING.md) for the full file-by-file breakdown of what's MIT vs commercial. The licensing structure has not yet undergone attorney review; treat the boundary as provisional until it does.
 
 **MIT License** -- Core tracking (page views, clicks, forms, events, batching, retry logic). Free for personal **and** commercial use, no restrictions.
 

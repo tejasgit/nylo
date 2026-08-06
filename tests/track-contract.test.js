@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * End-to-end contract test: an SDK-built batch round-trips through the
  * demo server's /api/track ingestion.

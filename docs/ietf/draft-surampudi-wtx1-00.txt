@@ -16,7 +16,7 @@ Abstract
    This document defines the WTX-1 (WaiTag Transfer Protocol, version 1)
    for preserving pseudonymous user context across unrelated web domains
    without third-party cookies, browser fingerprinting, login
-   requirements, or personal data collection.  The protocol uses
+   requirements, or collection of direct identifiers.  The protocol uses
    cryptographically generated pseudonymous identifiers (WaiTags), URL
    hash fragment transport, server-side verification, and DNS-based
    domain authorization to enable privacy-respecting cross-domain
@@ -150,7 +150,8 @@ Internet-Draft                    WTX-1                    February 2026
 
    1.  Preserves visitor context across unrelated domains
 
-   2.  Never collects, transmits, or derives personal information
+   2.  Never collects, transmits, or derives direct identifiers; the
+       WaiTag itself remains pseudonymous (personal data under GDPR)
 
    3.  Works without cookies, fingerprinting, or login
 
@@ -181,7 +182,7 @@ Internet-Draft                    WTX-1                    February 2026
 
    WaiTag  A pseudonymous identifier generated per-visitor using
       cryptographic randomness.  Format:
-      wai_<timestamp_b36>_<random><domain_hash>.  Contains no personally
+      wai_<timestamp_b36>_<random><domain_hash>.  Contains no directly
       identifiable information (PII).
 
    Origin Domain  The domain where the user's session begins and the
@@ -873,7 +874,8 @@ Internet-Draft                    WTX-1                    February 2026
 
    WTX-1 makes the following privacy commitments:
 
-   1.  No PII collection: The protocol never collects, transmits, or
+   1.  No direct-identifier collection: The protocol never collects,
+       transmits, or
        derives personal information such as names, email addresses,
        phone numbers, or physical addresses.
 

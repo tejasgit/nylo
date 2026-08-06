@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * Nylo Demo Server with PostgreSQL Persistence
  *

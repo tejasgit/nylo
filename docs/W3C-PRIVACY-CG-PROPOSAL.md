@@ -1,5 +1,7 @@
 # W3C Privacy Community Group — Proposal Issue
 
+> License: This document is released under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+
 > **Title:** WTX-1: Privacy-Preserving Cross-Domain Context Preservation Without Third-Party Cookies or Fingerprinting
 >
 > **Repository:** [privacycg/proposals](https://github.com/privacycg/proposals/issues/new)
@@ -25,7 +27,7 @@ WTX-1 (WaiTag Transfer Protocol, version 1) is a protocol for preserving pseudon
 
 ### How it works
 
-1. **Pseudonymous identifiers (WaiTags):** A cryptographically random identifier is generated client-side using `crypto.getRandomValues()`. It contains no PII, no device signals, no derivable real-world identity.
+1. **Pseudonymous identifiers (WaiTags):** A cryptographically random identifier is generated client-side using `crypto.getRandomValues()`. It contains no direct identifiers, no device signals, no derivable real-world identity. It is pseudonymous, not anonymous — it persists and singles out a browser, so it is generally personal data under GDPR-style regimes, and an implementer's application-level `identify()` call can link it to a known user (making the linked data fully personal data).
 
 2. **DNS domain authorization:** Domains must publish DNS TXT records to opt in to cross-domain identity sharing. Only domains under the same administrative control can participate — no open enrollment, no wildcards.
 
@@ -37,7 +39,7 @@ WTX-1 (WaiTag Transfer Protocol, version 1) is a protocol for preserving pseudon
 
 ### What it explicitly does NOT do
 
-- No PII collection or derivation
+- No collection or derivation of direct identifiers (WaiTags remain pseudonymous — still personal data under GDPR-style regimes)
 - No fingerprinting (no hardware, software, or behavioral signals)
 - No third-party cookies or cross-domain Set-Cookie/Cookie mechanism (first-party cookie used only as local storage fallback)
 - No login requirement
@@ -68,7 +70,7 @@ WTX-1 is complementary to several active Privacy CG proposals:
 
 An IETF Internet-Draft has been submitted: [`draft-surampudi-wtx1-00`](https://datatracker.ietf.org/doc/draft-surampudi-wtx1/)
 
-Reference implementation (Nylo SDK): [github.com/tejasgit/nylo](https://github.com/tejasgit/nylo) (MIT License)
+Reference implementation (Nylo SDK): [github.com/tejasgit/nylo](https://github.com/tejasgit/nylo) (dual-licensed: MIT core, commercial license for cross-domain identity features — see LICENSING.md in the repository)
 
 Protocol specification: [github.com/tejasgit/wtx-1](https://github.com/tejasgit/wtx-1)
 

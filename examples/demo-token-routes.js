@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * Shared cross-domain token verification route for the Nylo demo servers.
  *

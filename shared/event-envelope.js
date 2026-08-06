@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * Nylo Event Envelope — versioned client/server batching contract.
  *

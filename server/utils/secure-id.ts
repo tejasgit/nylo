@@ -1,4 +1,6 @@
 /**
+ * SPDX-License-Identifier: MIT
+ *
  * Secure ID Generation Utilities
  *
  * Copyright (c) 2024-2026 Nylo Contributors

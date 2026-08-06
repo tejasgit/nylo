@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { isValidDomainName, hostMatchesPattern, originAllowed } = require('../server/utils/security-core');

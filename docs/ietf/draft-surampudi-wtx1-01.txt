@@ -17,7 +17,7 @@ Abstract
    This document defines the WTX-1 (WaiTag Transfer Protocol,
    version 1) for preserving pseudonymous user context across unrelated
    web domains without third-party cookies, browser fingerprinting,
-   login requirements, or personal data collection.  The protocol uses
+   login requirements, or collection of direct identifiers.  The protocol uses
    cryptographically generated pseudonymous identifiers (WaiTags), URL
    hash fragment transport with early-cleanup scripts, server-side
    verification with replay protection, and DNS-based domain
@@ -179,7 +179,8 @@ Internet-Draft                    WTX-1                       March 2026
 
    1.  Preserves visitor context across unrelated domains
 
-   2.  Never collects, transmits, or derives personal information
+   2.  Never collects, transmits, or derives direct identifiers; the
+       WaiTag itself remains pseudonymous (personal data under GDPR)
 
    3.  Works without cookies, fingerprinting, or login
 
@@ -265,7 +266,7 @@ Internet-Draft                    WTX-1                       March 2026
 
    WaiTag  A pseudonymous identifier generated per-visitor using
       cryptographic randomness.  Format:
-      wai_<random>_<domain_hash>.  Contains no personally
+      wai_<random>_<domain_hash>.  Contains no directly
       identifiable information (PII).
 
    Origin Domain  The domain where the user's session begins and the
@@ -1051,7 +1052,8 @@ Internet-Draft                    WTX-1                       March 2026
    Data stored in localStorage SHOULD be encoded with a customer-
    specific salt and timestamp to prevent casual inspection.  This is
    obfuscation, not cryptographic security.  The stored data contains
-   no PII regardless of encoding.
+   no direct identifiers regardless of encoding; the identifier
+   remains pseudonymous personal data.
 
 
 
@@ -1468,7 +1470,8 @@ Internet-Draft                    WTX-1                       March 2026
 
 13.1.  Core Privacy Commitments
 
-   1.  No PII collection: The protocol never collects, transmits, or
+   1.  No direct-identifier collection: The protocol never collects,
+       transmits, or
        derives personal information such as names, email addresses,
        phone numbers, or physical addresses.
 

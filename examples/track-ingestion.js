@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * Shared /api/track ingestion logic for the Nylo demo servers.
  *

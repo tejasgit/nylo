@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /** Type declarations for the shared Nylo event envelope contract. */
 
 export const SCHEMA_VERSION: 1;

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 const { test, before, after } = require('node:test');
 const assert = require('node:assert');
 const express = require('express');

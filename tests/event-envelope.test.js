@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * Contract tests for the shared event envelope (client <-> server).
  */
