@@ -16,6 +16,9 @@ const express = require('express');
 const crypto = require('crypto');
 const path = require('path');
 const { createSqliteStorage } = require('./storage-sqlite');
+
+const { createTrackHandler } = require('./track-ingestion');
+const { LIMITS } = require('../shared/event-envelope');
 const { createCorsMiddleware } = require('./demo-cors');
 const { registerTokenVerification } = require('./demo-token-routes');
 
@@ -27,7 +30,7 @@ const NYLO_TOKEN_SECRET = (function() {
 })();
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: LIMITS.MAX_BATCH_BYTES }));
 
 app.use((req, res, next) => {
   res.header('Cache-Control', 'no-cache, no-store, must-revalidate');
@@ -46,60 +49,28 @@ app.get('/nylo.js', (req, res) => {
 
 app.use(express.static(path.join(__dirname)));
 
-app.post('/api/track', async (req, res) => {
-  let events = [];
-  let common = {};
-
-  if (req.body.events && req.body.events.common && Array.isArray(req.body.events.events)) {
-    common = req.body.events.common;
-    events = req.body.events.events;
-  } else if (req.body.common && Array.isArray(req.body.events)) {
-    common = req.body.common;
-    events = req.body.events;
-  } else if (Array.isArray(req.body.events)) {
-    events = req.body.events;
-  } else if (Array.isArray(req.body)) {
-    events = req.body;
-  } else {
-    events = [req.body];
-  }
-
-  let processedCount = 0;
-  const customerId = req.headers['x-customer-id'] || common.customerId || '1';
-
-  for (const event of events) {
-    const eventType = event.eventType || event.interactionType;
-    const sessionId = event.sessionId || common.sessionId || req.headers['x-session-id'];
-    const domain = event.domain || common.domain || 'localhost';
-    const waiTag = event.waiTag || common.waiTag || req.headers['x-waitag'] || null;
-    const userId = event.userId || common.userId || waiTag;
-
-    if (!eventType) continue;
-
-    try {
-      await storage.createInteraction({
-        sessionId: sessionId || 'unknown',
-        userId,
-        waiTag,
-        pageUrl: event.url || event.pageUrl || '',
-        domain,
-        mainDomain: domain.split('.').length > 2 ? domain.split('.').slice(1).join('.') : domain,
-        subdomain: domain.split('.').length > 2 ? domain.split('.')[0] : null,
-        interactionType: eventType,
-        content: event.metadata || '',
-        customerId,
-        featureName: eventType,
-        featureCategory: 'tracking',
-        context: { metadata: event.metadata || {} }
-      });
-      processedCount++;
-    } catch (err) {
-      console.error('Failed to store event:', err.message);
+app.post('/api/track', createTrackHandler(async (event) => {
+  await storage.createInteraction({
+    sessionId: event.sessionId,
+    userId: event.userId,
+    waiTag: event.waiTag,
+    pageUrl: event.url,
+    domain: event.domain,
+    mainDomain: event.domain.split('.').length > 2 ? event.domain.split('.').slice(1).join('.') : event.domain,
+    subdomain: event.domain.split('.').length > 2 ? event.domain.split('.')[0] : null,
+    interactionType: event.eventType,
+    content: event.metadata,
+    customerId: event.customerId,
+    featureName: event.eventType,
+    featureCategory: 'tracking',
+    context: {
+      metadata: event.metadata,
+      eventId: event.eventId,
+      clientTimestamp: event.clientTimestamp,
+      serverReceivedAt: event.receivedAt
     }
-  }
-
-  res.json({ success: true, eventsProcessed: processedCount, totalEvents: events.length });
-});
+  });
+}));
 
 app.post('/api/tracking/register-waitag', async (req, res) => {
   const { waiTag, sessionId, domain, customerId } = req.body;

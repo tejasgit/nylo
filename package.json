@@ -7,13 +7,14 @@
   "files": [
     "src/",
     "server/",
+    "shared/",
     "LICENSE",
     "COMMERCIAL-LICENSE",
     "README.md"
   ],
   "scripts": {
     "lint": "echo 'Lint coming soon'",
-    "test": "node --test test/",
+    "test": "node --test test/ tests/",
     "typecheck": "tsc --noEmit --project tsconfig.json"
   },
   "keywords": [

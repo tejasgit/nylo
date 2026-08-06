@@ -1,6 +1,9 @@
 const express = require('express');
 const crypto = require('crypto');
 const path = require('path');
+
+const { createTrackHandler } = require('./track-ingestion');
+const { LIMITS } = require('../shared/event-envelope');
 const { createCorsMiddleware } = require('./demo-cors');
 const { registerTokenVerification } = require('./demo-token-routes');
 const {
@@ -12,7 +15,7 @@ const {
 } = require('../server/utils/token-core');
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: LIMITS.MAX_BATCH_BYTES }));
 
 const ALLOWED_ORIGINS = (process.env.NYLO_ALLOWED_ORIGINS || '').split(',').filter(Boolean);
 const ENFORCE_HTTPS = process.env.NODE_ENV === 'production';
@@ -83,52 +86,23 @@ app.use(express.static(path.join(__dirname)));
 const interactions = [];
 const waiTags = [];
 
-app.post('/api/track', (req, res) => {
-  let events = [];
-  let common = {};
-
-  if (req.body.common && req.body.events) {
-    common = req.body.common;
-    events = req.body.events;
-  } else if (Array.isArray(req.body.events)) {
-    events = req.body.events;
-  } else if (Array.isArray(req.body)) {
-    events = req.body;
-  } else {
-    events = [req.body];
-  }
-
-  let processedCount = 0;
-
-  const customerId = req.headers['x-customer-id'] || common.customerId || '1';
-
-  for (const event of events) {
-    const eventType = event.eventType || event.interactionType;
-    const sessionId = event.sessionId || common.sessionId || req.headers['x-session-id'];
-    const domain = event.domain || common.domain || 'localhost';
-    const waiTag = event.waiTag || common.waiTag || req.headers['x-waitag'] || null;
-    const userId = event.userId || common.userId || waiTag;
-
-    if (!eventType) continue;
-
-    const interaction = {
-      id: interactions.length + 1,
-      eventType,
-      domain,
-      sessionId: sessionId || 'unknown',
-      userId,
-      waiTag,
-      customerId,
-      url: event.url || event.pageUrl || '',
-      metadata: event.metadata || {},
-      timestamp: new Date().toISOString()
-    };
-    interactions.push(interaction);
-    processedCount++;
-  }
-
-  res.json({ success: true, eventsProcessed: processedCount, totalEvents: events.length });
-});
+app.post('/api/track', createTrackHandler((event) => {
+  const interaction = {
+    id: interactions.length + 1,
+    eventId: event.eventId,
+    eventType: event.eventType,
+    domain: event.domain,
+    sessionId: event.sessionId,
+    userId: event.userId,
+    waiTag: event.waiTag,
+    customerId: event.customerId,
+    url: event.url,
+    metadata: event.metadata,
+    clientTimestamp: event.clientTimestamp,
+    timestamp: event.receivedAt
+  };
+  interactions.push(interaction);
+}));
 
 app.post('/api/tracking/register-waitag', (req, res) => {
   const { waiTag, sessionId, domain, customerId } = req.body;
@@ -143,6 +117,7 @@ app.post('/api/tracking/register-waitag', (req, res) => {
     customerId: customerId || '1',
     registeredAt: new Date().toISOString()
   };
+
   waiTags.push(registration);
 
   res.json({

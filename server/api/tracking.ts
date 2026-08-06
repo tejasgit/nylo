@@ -12,6 +12,7 @@ import {
   validateEventType,
   sanitizeFormData
 } from '../utils/input-validation';
+import { parseEnvelope } from '../../shared/event-envelope';
 
 const dedupCache = new Map<string, number>();
 const DEDUP_WINDOW_MS = parseInt(process.env.TRACKING_DEDUP_WINDOW_SECONDS || '60', 10) * 1000;
@@ -76,41 +77,51 @@ export function registerTrackingRoutes(app: any, storage: TrackingStorage) {
   // CORS (including OPTIONS preflight) is handled centrally in server/index.ts.
   app.post("/api/track", async (req: Request, res: Response) => {
     try {
-      const events = req.body.events || [req.body];
-
-      if (!events || events.length === 0) {
-        return res.status(400).json({ message: 'No events provided' });
+      const parsed = parseEnvelope(req.body);
+      if (parsed.ok !== true) {
+        // Explicit cast: keeps narrowing robust even when compiled without strict mode.
+        const failure = parsed as { status: number; error: string; message: string };
+        return res.status(failure.status).json({
+          success: false,
+          error: failure.error,
+          message: failure.message
+        });
       }
 
+      const receivedAt = new Date();
+      const results: Array<{ index: number; eventId: string | null; status: string; reason?: string }> = [];
       let processedCount = 0;
-      let skippedCount = 0;
 
-      for (const eventItem of events) {
+      for (let i = 0; i < parsed.events.length; i++) {
+        const eventItem = parsed.events[i];
+        const eventId: string | null = typeof eventItem.eventId === 'string' ? eventItem.eventId : null;
+
         const validated = validateAndSanitizeEvent(eventItem);
         if (!validated) {
-          skippedCount++;
+          results.push({ index: i, eventId, status: 'rejected', reason: 'validation_failed' });
           continue;
         }
 
+        // Idempotent dedup: prefer the client-generated cryptographic eventId,
+        // fall back to a content hash for legacy (schemaVersion 0) events.
         const eventTimestampStr = validated.timestamp ? String(validated.timestamp) : '';
-        const dedupString = `${validated.sessionId}:${validated.eventType}:${eventTimestampStr}`;
-        const dedupKey = crypto.createHash('sha256').update(dedupString).digest('hex');
+        const dedupKey = eventId
+          ? `id:${eventId}`
+          : crypto.createHash('sha256')
+              .update(`${validated.sessionId}:${validated.eventType}:${eventTimestampStr}`)
+              .digest('hex');
 
-        const now = Date.now();
-        if (dedupCache.has(dedupKey)) {
-          const expireAt = dedupCache.get(dedupKey)!;
-          if (now < expireAt) {
-            continue;
-          }
+        const expireAt = dedupCache.get(dedupKey);
+        if (expireAt !== undefined && Date.now() < expireAt) {
+          results.push({ index: i, eventId, status: 'duplicate' });
+          continue;
         }
-
-        dedupCache.set(dedupKey, now + DEDUP_WINDOW_MS);
 
         try {
           await storage.createInteraction({
             sessionId: validated.sessionId,
             userId: validated.userId,
-            timestamp: new Date(),
+            timestamp: receivedAt,
             pageUrl: validated.url,
             domain: validated.domain,
             interactionType: validated.eventType,
@@ -120,19 +131,33 @@ export function registerTrackingRoutes(app: any, storage: TrackingStorage) {
             customerId: req.headers['x-customer-id'],
             featureName: validated.eventType,
             featureCategory: 'tracking',
-            context: { metadata: validated.metadata, ...validated.rest }
+            context: {
+              metadata: validated.metadata,
+              ...validated.rest,
+              eventId,
+              clientTimestamp: validated.timestamp || null,
+              serverReceivedAt: receivedAt.toISOString()
+            }
           });
+          // Commit dedup only after storage succeeded, so a client retry of
+          // a storage_failed event is stored instead of reported as duplicate.
+          dedupCache.set(dedupKey, Date.now() + DEDUP_WINDOW_MS);
           processedCount++;
+          results.push({ index: i, eventId, status: 'stored' });
         } catch (error) {
           console.error('Failed to store event:', validated.eventType);
+          results.push({ index: i, eventId, status: 'error', reason: 'storage_failed' });
         }
       }
 
       res.json({
-        success: true,
+        success: processedCount > 0 || parsed.events.length === 0,
+        schemaVersion: parsed.schemaVersion,
+        batchId: parsed.batchId,
         eventsProcessed: processedCount,
-        eventsSkipped: skippedCount,
-        totalEvents: events.length
+        eventsSkipped: parsed.events.length - processedCount,
+        totalEvents: parsed.events.length,
+        results
       });
 
     } catch (error) {

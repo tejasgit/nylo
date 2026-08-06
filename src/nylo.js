@@ -281,32 +281,33 @@
     }
   };
 
+  var ENVELOPE_SCHEMA_VERSION = 1;
   var Compression = {
     compress: function(data) {
-      if (!config.compressionEnabled) return data;
+      var first = data[0] || {};
+      var common = {};
+      ENVELOPE_COMMON_FIELDS.forEach(function(field) {
+        var value = field === 'customerId' ? customerId : first[field];
+        if (value !== undefined && value !== null) common[field] = value;
+      });
+
+      if (!config.compressionEnabled) {
+        return { common: common, events: data };
+      }
+
       try {
         var compressed = data.map(function(event) {
-          var rest = Object.assign({}, event);
-          delete rest.sessionId;
-          delete rest.userId;
-          delete rest.waiTag;
-          delete rest.domain;
-          delete rest.customerId;
+          var rest = {};
+          Object.keys(event).forEach(function(key) {
+            if (ENVELOPE_COMMON_FIELDS.indexOf(key) !== -1 && event[key] === common[key]) return;
+            rest[key] = event[key];
+          });
           return rest;
         });
-        return {
-          common: {
-            sessionId: data[0]?.sessionId,
-            userId: data[0]?.userId,
-            waiTag: data[0]?.waiTag,
-            domain: data[0]?.domain,
-            customerId: customerId
-          },
-          events: compressed
-        };
+        return { common: common, events: compressed };
       } catch (e) {
         Logger.error('Compression failed:', e);
-        return data;
+        return { common: common, events: data };
       }
     }
   };
@@ -324,6 +325,7 @@
     },
     debug: function() { this.log.apply(this, ['debug'].concat(Array.prototype.slice.call(arguments))); },
     info: function() { this.log.apply(this, ['info'].concat(Array.prototype.slice.call(arguments))); },
+    warn: function() { this.log.apply(this, ['warn'].concat(Array.prototype.slice.call(arguments))); },
     error: function() { this.log.apply(this, ['error'].concat(Array.prototype.slice.call(arguments))); },
     performance: function(action, duration) {
       if (config.performanceMonitoring) {
@@ -917,6 +919,7 @@
     }
 
     var event = {
+      eventId: Security.generateCSRFToken(),
       sessionId: state.sessionId,
       waiTag: state.waiTag,
       userId: state.userId,
@@ -1033,18 +1036,71 @@
       },
       credentials: 'include',
       body: JSON.stringify({
-        events: compressedBatch,
+        schemaVersion: ENVELOPE_SCHEMA_VERSION,
         batchId: Security.generateCSRFToken(),
-        timestamp: new Date().toISOString()
+        sentAt: new Date().toISOString(),
+        common: compressedBatch.common,
+        events: compressedBatch.events
       })
     };
+
+    function scheduleRetry(eventsToRetry) {
+      state.performanceMetrics.errors++;
+
+      if (retryCount < config.maxRetries) {
+        state.retryQueue.push.apply(state.retryQueue, eventsToRetry);
+        var retryDelay = Math.pow(2, retryCount) * 1000;
+        retryCount++;
+
+        setTimeout(function() {
+          var retryBatch = state.retryQueue.splice(0, config.batchSize);
+          if (retryBatch.length > 0) {
+            state.eventQueue.unshift.apply(state.eventQueue, retryBatch);
+            sendBatch();
+          }
+        }, retryDelay);
+      } else {
+        isCircuitBreakerOpen = true;
+        setTimeout(function() {
+          isCircuitBreakerOpen = false;
+          retryCount = 0;
+        }, 30000);
+      }
+    }
 
     fetch(getApiUrl() + '/api/track', requestOptions)
       .then(function(response) {
         if (!response.ok) throw new Error('HTTP ' + response.status);
         return response.json();
       })
-      .then(function() {
+      .then(function(result) {
+        // Inspect per-event ingestion results; HTTP 200 alone is not success.
+        // Events the server failed to store transiently are requeued with the
+        // same eventId (server dedup makes redelivery idempotent). Events the
+        // server rejected as invalid are dropped — retrying cannot fix them.
+        var failedEvents = [];
+        var rejectedCount = 0;
+        if (result && Array.isArray(result.results)) {
+          result.results.forEach(function(r) {
+            if (!r || typeof r.index !== 'number' || !batch[r.index]) return;
+            if (r.status === 'error') {
+              failedEvents.push(batch[r.index]);
+            } else if (r.status === 'rejected') {
+              rejectedCount++;
+            }
+          });
+        }
+
+        if (rejectedCount > 0) {
+          Logger.warn('Server rejected ' + rejectedCount + ' event(s) as invalid; dropping');
+        }
+
+        if (failedEvents.length > 0) {
+          Logger.warn('Server failed to store ' + failedEvents.length + ' event(s); retrying');
+          scheduleRetry(failedEvents);
+          return;
+        }
+
         retryCount = 0;
         isCircuitBreakerOpen = false;
         state.performanceMetrics.batchesSent++;
@@ -1052,27 +1108,7 @@
         Performance.measure('batch-send', 'batch-start');
       })
       .catch(function() {
-        state.performanceMetrics.errors++;
-
-        if (retryCount < config.maxRetries) {
-          state.retryQueue.push.apply(state.retryQueue, batch);
-          var retryDelay = Math.pow(2, retryCount) * 1000;
-          retryCount++;
-
-          setTimeout(function() {
-            var retryBatch = state.retryQueue.splice(0, config.batchSize);
-            if (retryBatch.length > 0) {
-              state.eventQueue.unshift.apply(state.eventQueue, retryBatch);
-              sendBatch();
-            }
-          }, retryDelay);
-        } else {
-          isCircuitBreakerOpen = true;
-          setTimeout(function() {
-            isCircuitBreakerOpen = false;
-            retryCount = 0;
-          }, 30000);
-        }
+        scheduleRetry(batch);
       });
   }
 
@@ -1436,3 +1472,5 @@
     initialize();
   }
 })();
+
+  var ENVELOPE_COMMON_FIELDS = ['sessionId', 'userId', 'waiTag', 'domain', 'customerId'];

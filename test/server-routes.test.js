@@ -35,6 +35,13 @@ before(() => {
       fs.copyFileSync(path.join(ROOT, 'server', 'utils', f), path.join(BUILD_DIR, 'server', 'utils', f));
     }
   }
+  // Same for the shared event-envelope contract module (plain CJS .js).
+  fs.mkdirSync(path.join(BUILD_DIR, 'shared'), { recursive: true });
+  for (const f of fs.readdirSync(path.join(ROOT, 'shared'))) {
+    if (f.endsWith('.js')) {
+      fs.copyFileSync(path.join(ROOT, 'shared', f), path.join(BUILD_DIR, 'shared', f));
+    }
+  }
   ({ setupNyloRoutes } = require(path.join(BUILD_DIR, 'server', 'index.js')));
 });
 
