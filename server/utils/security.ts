@@ -25,16 +25,14 @@ export function sanitizeHtml(input: string): string {
     .replace(/'/g, '&#x27;');
 }
 
+import { hostMatchesPattern } from './security-core';
+
 export function validateOrigin(origin: string, allowedDomains: string[]): boolean {
   if (!origin) return false;
   try {
     const url = new URL(origin);
-    return allowedDomains.some(domain => {
-      if (domain.startsWith('*.')) {
-        return url.hostname.endsWith(domain.substring(2));
-      }
-      return url.hostname === domain;
-    });
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+    return allowedDomains.some(domain => hostMatchesPattern(url.hostname, domain));
   } catch {
     return false;
   }

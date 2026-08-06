@@ -13,7 +13,7 @@
   ],
   "scripts": {
     "lint": "echo 'Lint coming soon'",
-    "test": "echo 'Tests coming soon'",
+    "test": "node --test test/",
     "typecheck": "tsc --noEmit --project tsconfig.json"
   },
   "keywords": [

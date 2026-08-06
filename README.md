@@ -151,7 +151,6 @@ nylo/
 │   ├── api/
 │   │   ├── tracking.ts            # Batch event ingestion
 │   │   ├── waitag-tracking.ts     # WaiTag registration + cross-domain verification
-│   │   ├── tracking-sync.ts       # Cross-domain identity synchronization
 │   │   └── dns-verify.ts          # DNS TXT record domain ownership verification
 │   └── utils/
 │       ├── secure-id.ts           # Cryptographic ID generation

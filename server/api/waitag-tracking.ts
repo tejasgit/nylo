@@ -9,7 +9,13 @@
  */
 
 import type { Request, Response } from "express";
-import crypto from 'crypto';
+import {
+  signCrossDomainToken,
+  verifyCrossDomainToken,
+  hashToken,
+  createInMemoryReplayStore,
+  DEFAULT_TTL_MS
+} from '../utils/token-core';
 import { generateWaiTagId, generateSessionId } from '../utils/secure-id';
 import {
   validateWaiTagId,
@@ -20,45 +26,16 @@ import {
   validateTrackingEvent
 } from '../utils/input-validation';
 
-function hashToken(token: string): string {
-  return crypto.createHash('sha256').update(token).digest('hex');
-}
-
-function verifyTokenSignature(token: string, secret: string): { valid: boolean; payload: any } {
-  try {
-    const decoded = Buffer.from(token, 'base64').toString('utf-8');
-    const parsed = JSON.parse(decoded);
-
-    if (!parsed.sig || !parsed.waiTag || !parsed.sessionId) {
-      return { valid: false, payload: null };
-    }
-
-    if (parsed.exp && Date.now() > parsed.exp) {
-      return { valid: false, payload: null };
-    }
-
-    const dataToSign = JSON.stringify({
-      waiTag: parsed.waiTag,
-      sessionId: parsed.sessionId,
-      userId: parsed.userId || null,
-      domain: parsed.domain || '',
-      exp: parsed.exp
-    });
-    const expectedSig = crypto.createHmac('sha256', secret).update(dataToSign).digest('hex');
-
-    if (!crypto.timingSafeEqual(Buffer.from(parsed.sig, 'hex'), Buffer.from(expectedSig, 'hex'))) {
-      return { valid: false, payload: null };
-    }
-
-    return { valid: true, payload: parsed };
-  } catch {
-    return { valid: false, payload: null };
-  }
-}
-
 export interface TokenReplayStore {
   isTokenUsed(tokenHash: string): Promise<boolean>;
   markTokenUsed(tokenHash: string, expiresInMs?: number): Promise<void>;
+  /**
+   * Atomically consume a token: resolves true if this caller won (the token
+   * was unused and is now marked used), false if it was already consumed.
+   * Implement with a conditional insert (e.g. INSERT ... ON CONFLICT DO
+   * NOTHING / SET NX) so concurrent verifications cannot both succeed.
+   */
+  consumeToken?(tokenHash: string, expiresInMs?: number): Promise<boolean>;
 }
 
 export interface WaiTagStorage {
@@ -72,17 +49,31 @@ export interface WaiTagStorage {
 }
 
 export function registerWaiTagTrackingRoutes(app: any, storage: WaiTagStorage) {
-  app.options("/api/tracking/register-waitag", (req: Request, res: Response) => {
-    const origin = req.headers.origin || '*';
-    res.header('Access-Control-Allow-Origin', origin);
-    res.header('Access-Control-Allow-Methods', 'POST, OPTIONS');
-    res.header('Access-Control-Allow-Credentials', 'true');
-    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, X-API-Key, Cookie');
-    res.header('Access-Control-Expose-Headers', 'X-WaiTag, X-Cross-Domain-WaiTag');
-    res.header('Access-Control-Max-Age', '86400');
-    res.status(200).send();
-  });
+  // Replay protection must always exist. Prefer a durable store supplied by
+  // the integrator; fall back to an in-memory store (single-process only).
+  const replayStore: TokenReplayStore = storage.tokenReplayStore || createInMemoryReplayStore();
+  if (!storage.tokenReplayStore) {
+    console.warn('[SECURITY] No durable tokenReplayStore provided — using in-memory replay protection (single process only).');
+  }
 
+  // Atomic consume. Stores that implement consumeToken() are used directly;
+  // legacy check+mark stores are serialized through a per-process promise
+  // chain so two concurrent verifications of the same token cannot both win.
+  let legacyConsumeChain: Promise<unknown> = Promise.resolve();
+  function consumeReplayToken(tokenHash: string, ttlMs: number): Promise<boolean> {
+    if (typeof replayStore.consumeToken === 'function') {
+      return replayStore.consumeToken(tokenHash, ttlMs);
+    }
+    const result = legacyConsumeChain.then(async () => {
+      const alreadyUsed = await replayStore.isTokenUsed(tokenHash);
+      if (alreadyUsed) return false;
+      await replayStore.markTokenUsed(tokenHash, ttlMs);
+      return true;
+    });
+    legacyConsumeChain = result.catch(() => undefined);
+    return result;
+  }
+  // CORS (including OPTIONS preflight) is handled centrally in server/index.ts.
   app.post("/api/tracking/register-waitag", async (req: Request, res: Response) => {
     try {
       const sanitizedBody = sanitizeFormData(req.body);
@@ -141,12 +132,6 @@ export function registerWaiTagTrackingRoutes(app: any, storage: WaiTagStorage) {
       if (!effectiveApiKey && rawApiKey) {
         try { effectiveApiKey = validateApiKey(rawApiKey); } catch {}
       }
-
-      const origin = req.headers.origin || '*';
-      res.header('Access-Control-Allow-Origin', origin);
-      res.header('Access-Control-Allow-Credentials', 'true');
-      res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, X-API-Key, Cookie');
-      res.header('Access-Control-Expose-Headers', 'X-WaiTag, X-Cross-Domain-WaiTag');
 
       let customer;
       try {
@@ -217,96 +202,92 @@ export function registerWaiTagTrackingRoutes(app: any, storage: WaiTagStorage) {
     console.error('[SECURITY] Set NYLO_TOKEN_SECRET environment variable to enable cross-domain features.');
   } else {
 
-  app.options("/api/tracking/verify-cross-domain-token", (req: Request, res: Response) => {
-    const origin = req.headers.origin || '*';
-    res.header('Access-Control-Allow-Origin', origin);
-    res.header('Access-Control-Allow-Methods', 'POST, OPTIONS');
-    res.header('Access-Control-Allow-Credentials', 'true');
-    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, X-API-Key');
-    res.status(200).send();
-  });
+  /**
+   * Verifies that a domain is DNS-verified for the given tenant.
+   * Fail-closed: when the storage layer cannot verify domains, requests
+   * are rejected in production and allowed (with a warning) only in dev.
+   */
+  async function requireVerifiedDomain(domain: string, tenantId: number): Promise<{ ok: boolean; message?: string }> {
+    if (!storage.isDomainVerified) {
+      if (process.env.NODE_ENV === 'production') {
+        return { ok: false, message: 'Domain verification is not available — cross-domain tokens are disabled in production.' };
+      }
+      console.warn('[SECURITY] storage.isDomainVerified not implemented — skipping domain verification (development only).');
+      return { ok: true };
+    }
+    const verified = await storage.isDomainVerified(domain, tenantId);
+    if (!verified) {
+      return { ok: false, message: `Domain ${domain} is not verified for this tenant. Complete DNS verification first.` };
+    }
+    return { ok: true };
+  }
 
   app.post("/api/tracking/verify-cross-domain-token", async (req: Request, res: Response) => {
     try {
-      const { token, domain, customerId, referrer } = req.body;
+      const { token, domain, customerId } = req.body;
 
       if (!token) {
         return res.status(400).json({ success: false, message: 'Token is required' });
       }
+      if (!domain || !customerId) {
+        return res.status(400).json({ success: false, message: 'domain and customerId are required' });
+      }
 
-      const origin = req.headers.origin || '*';
-      res.header('Access-Control-Allow-Origin', origin);
-      res.header('Access-Control-Allow-Credentials', 'true');
-
-      if (storage.isDomainVerified && domain && customerId) {
-        const verified = await storage.isDomainVerified(domain, parseInt(customerId));
-        if (!verified) {
-          return res.status(403).json({
-            success: false,
-            message: 'Domain not verified. Complete DNS verification before using cross-domain features.'
-          });
-        }
+      let validDomain: string;
+      try {
+        validDomain = validateDomain(domain);
+      } catch {
+        return res.status(400).json({ success: false, message: 'Invalid domain format' });
       }
 
       const tokenSecret = process.env.NYLO_TOKEN_SECRET!;
+      const result = verifyCrossDomainToken(token, tokenSecret, {
+        expectedDestination: validDomain,
+        expectedTenant: customerId
+      });
 
-      try {
-        const decoded = JSON.parse(Buffer.from(token, 'base64').toString('utf-8'));
-
-        if (!decoded.sig) {
-          return res.status(403).json({
-            success: false,
-            error: 'MISSING_SIGNATURE',
-            message: 'Token signature is required — unsigned tokens are rejected'
-          });
-        }
-
-        const { valid, payload } = verifyTokenSignature(token, tokenSecret);
-        if (!valid) {
-          return res.status(403).json({
-            success: false,
-            error: 'INVALID_SIGNATURE',
-            message: 'Invalid or expired cross-domain token'
-          });
-        }
-
-        if (domain && payload.domain && payload.domain !== domain) {
-          return res.status(403).json({
-            success: false,
-            error: 'DOMAIN_MISMATCH',
-            message: 'Token was issued for a different domain'
-          });
-        }
-
-        if (storage.tokenReplayStore) {
-          const tokenHash = hashToken(token);
-          const alreadyUsed = await storage.tokenReplayStore.isTokenUsed(tokenHash);
-          if (alreadyUsed) {
-            return res.status(403).json({
-              success: false,
-              message: 'Token has already been used (replay detected)'
-            });
-          }
-          await storage.tokenReplayStore.markTokenUsed(tokenHash, 5 * 60 * 1000);
-        }
-
-        return res.json({
-          success: true,
-          identity: {
-            waiTag: payload.waiTag,
-            sessionId: payload.sessionId,
-            userId: payload.userId || null
-          },
-          domain: payload.domain,
-          verifiedAt: new Date().toISOString()
-        });
-      } catch {
-        return res.status(400).json({
+      if (!result.valid) {
+        const status = result.error === 'MALFORMED_TOKEN' ? 400 : 403;
+        return res.status(status).json({
           success: false,
-          error: 'MALFORMED_TOKEN',
-          message: 'Token is not valid base64-encoded JSON'
+          error: result.error,
+          message: 'Cross-domain token rejected: ' + result.error
         });
       }
+
+      const payload = result.payload!;
+      const tenantId = parseInt(payload.tenantId);
+
+      // Both source and destination must be verified for the same tenant.
+      for (const boundDomain of [payload.sourceDomain, payload.destinationDomain]) {
+        const check = await requireVerifiedDomain(boundDomain, tenantId);
+        if (!check.ok) {
+          return res.status(403).json({ success: false, error: 'DOMAIN_NOT_VERIFIED', message: check.message });
+        }
+      }
+
+      // Replay protection is mandatory and atomic: exactly one concurrent
+      // verification of the same token can win.
+      const tokenHash = hashToken(token);
+      const won = await consumeReplayToken(tokenHash, DEFAULT_TTL_MS);
+      if (!won) {
+        return res.status(403).json({
+          success: false,
+          error: 'TOKEN_REPLAYED',
+          message: 'Token has already been used (replay detected)'
+        });
+      }
+
+      return res.json({
+        success: true,
+        identity: {
+          waiTag: payload.waiTag,
+          sessionId: payload.sessionId,
+          userId: payload.userId || null
+        },
+        domain: payload.destinationDomain,
+        verifiedAt: new Date().toISOString()
+      });
     } catch (error) {
       console.error('Error verifying cross-domain token:', error);
       return res.status(500).json({ success: false, message: 'Server error' });
@@ -316,7 +297,7 @@ export function registerWaiTagTrackingRoutes(app: any, storage: WaiTagStorage) {
   app.post("/api/tracking/generate-cross-domain-token", async (req: Request, res: Response) => {
     try {
       const apiKey = req.headers['x-api-key'] as string;
-      if (!apiKey || apiKey !== process.env.NYLO_API_KEY) {
+      if (!apiKey || !process.env.NYLO_API_KEY || apiKey !== process.env.NYLO_API_KEY) {
         return res.status(401).json({
           success: false,
           error: 'UNAUTHORIZED',
@@ -324,50 +305,54 @@ export function registerWaiTagTrackingRoutes(app: any, storage: WaiTagStorage) {
         });
       }
 
-      const { waiTag, sessionId, userId, destinationDomain } = req.body;
+      const { waiTag, sessionId, userId, sourceDomain, destinationDomain, customerId } = req.body;
 
       if (!waiTag || !sessionId) {
         return res.status(400).json({ success: false, message: 'waiTag and sessionId are required' });
       }
-
-      if (!destinationDomain) {
-        return res.status(400).json({ success: false, message: 'destinationDomain is required — tokens must be bound to a destination' });
+      if (!customerId) {
+        return res.status(400).json({ success: false, message: 'customerId is required — tokens must be bound to a tenant' });
+      }
+      if (!sourceDomain || !destinationDomain) {
+        return res.status(400).json({ success: false, message: 'sourceDomain and destinationDomain are required — tokens must be bound to both domains' });
       }
 
-      const tokenSecret = process.env.NYLO_TOKEN_SECRET!;
+      let validSource: string;
+      let validDestination: string;
+      try {
+        validSource = validateDomain(sourceDomain);
+        validDestination = validateDomain(destinationDomain);
+      } catch {
+        return res.status(400).json({ success: false, message: 'Invalid sourceDomain or destinationDomain format' });
+      }
 
-      const customerId = req.body.customerId ? parseInt(req.body.customerId) : 0;
-      if (storage.isDomainVerified && customerId) {
-        const verified = await storage.isDomainVerified(destinationDomain, customerId);
-        if (!verified) {
-          return res.status(403).json({
-            success: false,
-            message: 'Destination domain not verified. Complete DNS verification first.'
-          });
+      const tenantId = parseInt(customerId);
+      if (!Number.isInteger(tenantId) || tenantId <= 0) {
+        return res.status(400).json({ success: false, message: 'Invalid customerId' });
+      }
+
+      // Both source and destination must be verified for the same tenant.
+      for (const boundDomain of [validSource, validDestination]) {
+        const check = await requireVerifiedDomain(boundDomain, tenantId);
+        if (!check.ok) {
+          return res.status(403).json({ success: false, error: 'DOMAIN_NOT_VERIFIED', message: check.message });
         }
       }
 
-      const exp = Date.now() + 5 * 60 * 1000;
-      const tokenPayload = {
+      const tokenSecret = process.env.NYLO_TOKEN_SECRET!;
+      const token = signCrossDomainToken({
+        tenantId,
+        sourceDomain: validSource,
+        destinationDomain: validDestination,
         waiTag,
         sessionId,
-        userId: userId || null,
-        domain: destinationDomain,
-        exp
-      };
-      const dataToSign = JSON.stringify(tokenPayload);
-      const sig = crypto.createHmac('sha256', tokenSecret).update(dataToSign).digest('hex');
-
-      const token = Buffer.from(JSON.stringify({ ...tokenPayload, sig })).toString('base64');
-
-      const origin = req.headers.origin || '*';
-      res.header('Access-Control-Allow-Origin', origin);
-      res.header('Access-Control-Allow-Credentials', 'true');
+        userId: userId || null
+      }, tokenSecret);
 
       return res.json({
         success: true,
         token,
-        expiresAt: new Date(exp).toISOString()
+        expiresAt: new Date(Date.now() + DEFAULT_TTL_MS).toISOString()
       });
     } catch (error) {
       console.error('Error generating cross-domain token:', error);
@@ -377,28 +362,9 @@ export function registerWaiTagTrackingRoutes(app: any, storage: WaiTagStorage) {
 
   } // end if (NYLO_TOKEN_SECRET) — cross-domain endpoints
 
-  app.post("/api/tracking/verify-waitag", async (req: Request, res: Response) => {
-    try {
-      const { waiTag, domain } = req.body;
-
-      if (!waiTag || !domain) {
-        return res.status(400).json({ success: false, message: 'Missing required fields' });
-      }
-
-      return res.json({ success: true, isValid: true, waiTag: waiTag });
-    } catch (error) {
-      return res.status(500).json({ success: false, message: 'Server error verifying WaiTag' });
-    }
-  });
-
-  app.options("/api/tracking/event", (req: Request, res: Response) => {
-    const origin = req.headers.origin || '*';
-    res.header('Access-Control-Allow-Origin', origin);
-    res.header('Access-Control-Allow-Methods', 'POST, OPTIONS');
-    res.header('Access-Control-Allow-Credentials', 'true');
-    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, X-API-Key');
-    res.status(200).send();
-  });
+  // NOTE: the legacy no-op /api/tracking/verify-waitag endpoint was removed —
+  // it always returned isValid:true without verification. Use
+  // /api/tracking/verify-cross-domain-token for real verification.
 
   app.post("/api/tracking/event", async (req: Request, res: Response) => {
     try {

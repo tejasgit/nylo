@@ -21,7 +21,6 @@ Cross-domain identity features are covered by patent-pending claims and require 
 |---------|-------|-------------|
 | **WTX-1 Protocol** | `src/nylo.js` (CrossDomainIdentity module) | Cross-domain token exchange and verification |
 | **WaiTag System** | `src/nylo.js` (Security.generateWaiTag), `server/api/waitag-tracking.ts` | Pseudonymous identifier generation and registration |
-| **Cross-Domain Sync** | `server/api/tracking-sync.ts` | Identity synchronization across domains |
 | **Encrypted Configuration** | `src/nylo.js` (parseEncryptedConfig) | AES-GCM encrypted feature toggles |
 | **DNS Domain Verification** | `server/api/dns-verify.ts`, `server/utils/dns-verification.ts` | Domain ownership verification for cross-domain auth |
 

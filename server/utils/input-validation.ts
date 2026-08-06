@@ -5,7 +5,8 @@
  * Licensed under MIT License (see LICENSE)
  */
 
-const DOMAIN_REGEX = /^[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9]?(\.[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9])*$/;
+import { isValidDomainName } from './security-core';
+
 const API_KEY_REGEX = /^[a-zA-Z0-9_-]{8,128}$/;
 const WAITAG_REGEX = /^(wai_[0-9a-zA-Z]{10,}_[a-zA-Z0-9]{1,}|[a-z]+-\d+-[a-f0-9]+)$/;
 const URL_REGEX = /^https?:\/\/.{1,2048}$/;
@@ -25,7 +26,7 @@ export function validateDomain(domain: string): string {
   }
   const cleaned = domain.trim().toLowerCase();
   if (cleaned.length > 253) throw new Error('Domain too long');
-  if (!DOMAIN_REGEX.test(cleaned) && !cleaned.includes('localhost')) {
+  if (!isValidDomainName(cleaned)) {
     throw new Error('Invalid domain format');
   }
   return cleaned;

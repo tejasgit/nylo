@@ -281,8 +281,15 @@
   <script
     src="/nylo.js"
     data-customer-id="1"
-    data-debug="true">
+    data-debug="true"
+    data-features="trackPageViews,trackClicks,trackLinks,trackButtons,trackForms,trackScrolling,trackErrors,trackCustomEvents,trackConversions,trackCrossDomain">
   </script>
+
+  <div id="consent-banner" style="display:none; position:fixed; bottom:0; left:0; right:0; background:#1a1a2e; color:#fff; padding:16px 24px; z-index:9999; box-shadow:0 -2px 12px rgba(0,0,0,0.3); font-size:14px;">
+    <span style="margin-right:16px;">This demo uses Nylo analytics. Tracking stays off until you allow it.</span>
+    <button onclick="grantConsent()" style="margin-right:8px; padding:8px 16px; background:#4f8cff; color:#fff; border:none; border-radius:6px; cursor:pointer;">Allow analytics</button>
+    <button onclick="denyConsent()" style="padding:8px 16px; background:transparent; color:#aaa; border:1px solid #555; border-radius:6px; cursor:pointer;">Decline</button>
+  </div>
 
   <script>
     var eventLog = document.getElementById('event-log');
@@ -477,6 +484,30 @@
       addEventToLog('sdk_init', 'Nylo v1.0.0 initialized');
       refreshStats();
     });
+
+    function grantConsent() {
+      if (window.Nylo) Nylo.setConsent({ analytics: true });
+      document.getElementById('consent-banner').style.display = 'none';
+      showToast('Analytics consent granted');
+    }
+
+    function denyConsent() {
+      if (window.Nylo) Nylo.setConsent({ analytics: false });
+      document.getElementById('consent-banner').style.display = 'none';
+      document.getElementById('status-badge').textContent = 'Tracking off (no consent)';
+      showToast('Analytics disabled');
+    }
+
+    function initConsentBanner() {
+      var consent = window.Nylo && Nylo.getConsent ? Nylo.getConsent() : null;
+      if (!consent || consent.state === 'unknown') {
+        document.getElementById('consent-banner').style.display = 'block';
+        document.getElementById('status-badge').textContent = 'Awaiting consent';
+      } else if (consent.state !== 'granted') {
+        document.getElementById('status-badge').textContent = 'Tracking off (no consent)';
+      }
+    }
+    if (window.Nylo) { initConsentBanner(); } else { setTimeout(initConsentBanner, 300); }
 
     var evtSource;
     function connectEventStream() {

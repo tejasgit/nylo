@@ -1,6 +1,15 @@
 const express = require('express');
 const crypto = require('crypto');
 const path = require('path');
+const { createCorsMiddleware } = require('./demo-cors');
+const { registerTokenVerification } = require('./demo-token-routes');
+const {
+  signCrossDomainToken,
+  verifyCrossDomainToken,
+  hashToken,
+  createInMemoryReplayStore,
+  DEFAULT_TTL_MS
+} = require('../server/utils/token-core');
 
 const app = express();
 app.use(express.json());
@@ -19,13 +28,7 @@ const NYLO_TOKEN_SECRET = (function() {
   return ephemeral;
 })();
 
-const usedTokens = new Map();
-setInterval(() => {
-  const now = Date.now();
-  for (const [hash, expiry] of usedTokens) {
-    if (now > expiry) usedTokens.delete(hash);
-  }
-}, 60 * 1000);
+const replayStore = createInMemoryReplayStore();
 
 if (ENFORCE_HTTPS) {
   app.use((req, res, next) => {
@@ -46,29 +49,8 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use((req, res, next) => {
-  const origin = req.headers.origin;
-  if (origin) {
-    const isAllowed = ALLOWED_ORIGINS.length === 0 || ALLOWED_ORIGINS.some(allowed => {
-      allowed = allowed.trim();
-      if (allowed.startsWith('*.')) {
-        return origin.endsWith(allowed.substring(1)) || origin === 'https://' + allowed.substring(2) || origin === 'http://' + allowed.substring(2);
-      }
-      return origin === 'https://' + allowed || origin === 'http://' + allowed || origin === allowed;
-    });
-
-    if (isAllowed) {
-      res.header('Access-Control-Allow-Origin', origin);
-      res.header('Access-Control-Allow-Credentials', 'true');
-      res.header('Access-Control-Allow-Headers',
-        'Origin, X-Requested-With, Content-Type, Accept, X-API-Key, X-Customer-ID, X-Session-ID, X-WaiTag, X-Batch-Size, X-SDK-Version');
-      res.header('Access-Control-Expose-Headers',
-        'X-WaiTag, X-Cross-Domain-WaiTag, X-Session-ID');
-    }
-  }
-  if (req.method === 'OPTIONS') return res.status(200).send();
-  next();
-});
+// Centralized fail-closed CORS shared by all demo servers (see demo-cors.js).
+app.use(createCorsMiddleware({ allowedOrigins: ALLOWED_ORIGINS, production: ENFORCE_HTTPS }));
 
 const rateLimitMap = new Map();
 const RATE_LIMIT_WINDOW = 60 * 1000;
@@ -171,83 +153,8 @@ app.post('/api/tracking/register-waitag', (req, res) => {
   });
 });
 
-app.post('/api/tracking/verify-cross-domain-token', (req, res) => {
-  const { token, domain, customerId } = req.body;
-
-  if (!token) {
-    return res.status(400).json({ success: false, message: 'Token is required' });
-  }
-
-  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-  if (usedTokens.has(tokenHash)) {
-    return res.status(403).json({
-      success: false,
-      message: 'Token has already been used (replay detected)'
-    });
-  }
-  usedTokens.set(tokenHash, Date.now() + 5 * 60 * 1000);
-
-  try {
-    const decoded = JSON.parse(Buffer.from(token, 'base64').toString('utf-8'));
-
-    if (!decoded.sig) {
-      return res.status(403).json({
-        success: false,
-        error: 'MISSING_SIGNATURE',
-        message: 'Token signature is required — unsigned tokens are rejected'
-      });
-    }
-
-    if (!decoded.waiTag || !decoded.sessionId) {
-      return res.status(400).json({
-        success: false,
-        error: 'INVALID_TOKEN',
-        message: 'Token must contain waiTag and sessionId'
-      });
-    }
-
-    if (decoded.exp && Date.now() > decoded.exp) {
-      return res.status(403).json({ success: false, error: 'TOKEN_EXPIRED', message: 'Token expired' });
-    }
-
-    const dataToSign = JSON.stringify({
-      waiTag: decoded.waiTag,
-      sessionId: decoded.sessionId,
-      userId: decoded.userId || null,
-      domain: decoded.domain || '',
-      exp: decoded.exp
-    });
-    const expectedSig = crypto.createHmac('sha256', NYLO_TOKEN_SECRET).update(dataToSign).digest('hex');
-
-    if (decoded.sig.length !== expectedSig.length ||
-        !crypto.timingSafeEqual(Buffer.from(decoded.sig, 'hex'), Buffer.from(expectedSig, 'hex'))) {
-      return res.status(403).json({ success: false, error: 'INVALID_SIGNATURE', message: 'Invalid token signature' });
-    }
-
-    if (domain && decoded.domain && decoded.domain !== domain) {
-      return res.status(403).json({ success: false, error: 'DOMAIN_MISMATCH', message: 'Token was issued for a different domain' });
-    }
-
-    return res.json({
-      success: true,
-      verified: true,
-      identity: {
-        sessionId: decoded.sessionId,
-        waiTag: decoded.waiTag,
-        userId: decoded.userId || null
-      },
-      domain: decoded.domain || domain,
-      verifiedAt: new Date().toISOString(),
-      message: 'Token verified'
-    });
-  } catch (e) {
-    return res.status(400).json({
-      success: false,
-      error: 'MALFORMED_TOKEN',
-      message: 'Token is not valid base64-encoded JSON'
-    });
-  }
-});
+// WTX-1 token verification with replay protection (shared, see demo-token-routes.js).
+registerTokenVerification(app, { secret: NYLO_TOKEN_SECRET, replayStore });
 
 app.post('/api/tracking/generate-cross-domain-token', (req, res) => {
   var apiKey = req.headers['x-api-key'];
@@ -259,45 +166,36 @@ app.post('/api/tracking/generate-cross-domain-token', (req, res) => {
     });
   }
 
-  const { waiTag, sessionId, userId, destinationDomain } = req.body;
+  const { waiTag, sessionId, userId, customerId, sourceDomain, destinationDomain } = req.body;
 
   if (!waiTag || !sessionId) {
     return res.status(400).json({ success: false, message: 'waiTag and sessionId are required' });
   }
-
-  if (!destinationDomain) {
-    return res.status(400).json({ success: false, message: 'destinationDomain is required — tokens must be bound to a destination' });
+  if (!customerId || !sourceDomain || !destinationDomain) {
+    return res.status(400).json({
+      success: false,
+      message: 'customerId, sourceDomain and destinationDomain are required — tokens are bound to tenant + source + destination'
+    });
   }
 
-  const exp = Date.now() + 5 * 60 * 1000;
-  const tokenPayload = {
-    waiTag,
-    sessionId,
-    userId: userId || null,
-    domain: destinationDomain,
-    exp
-  };
-  const dataToSign = JSON.stringify(tokenPayload);
-  const sig = crypto.createHmac('sha256', NYLO_TOKEN_SECRET).update(dataToSign).digest('hex');
-
-  const token = Buffer.from(JSON.stringify(Object.assign({}, tokenPayload, { sig }))).toString('base64');
+  let token;
+  try {
+    token = signCrossDomainToken({
+      tenantId: customerId,
+      sourceDomain,
+      destinationDomain,
+      waiTag,
+      sessionId,
+      userId: userId || null
+    }, NYLO_TOKEN_SECRET);
+  } catch (e) {
+    return res.status(400).json({ success: false, message: e.message });
+  }
 
   res.json({
     success: true,
     token,
-    expiresAt: new Date(exp).toISOString()
-  });
-});
-
-app.post('/api/tracking/sync-identity', (req, res) => {
-  const { waiTag, sessionId, domain } = req.body;
-  res.json({
-    success: true,
-    synced: true,
-    waiTag,
-    sessionId,
-    domain,
-    message: 'Identity synced (demo mode)'
+    expiresAt: new Date(Date.now() + DEFAULT_TTL_MS).toISOString()
   });
 });
 

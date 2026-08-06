@@ -29,6 +29,9 @@
 
   var state = {
     initialized: false,
+    consent: 'unknown', // 'unknown' | 'granted' | 'denied' | 'withdrawn'
+    trackingStarted: false,
+    trackingEpoch: 0, // bumped on stop/withdrawal to cancel in-flight startup
     sessionId: null,
     userId: null,
     waiTag: null,
@@ -67,6 +70,7 @@
   var debugMode = script?.getAttribute('data-debug') === 'true';
   var embedId = script?.getAttribute('data-embed-id') || 'default';
   var encryptedConfig = script?.getAttribute('data-config') || null;
+  var plainFeatures = script?.getAttribute('data-features') || null;
   var encryptedSecurity = script?.getAttribute('data-security') || null;
   var apiEndpoint = script?.getAttribute('data-api') || null;
 
@@ -88,7 +92,7 @@
     trackPagePerformance: false,
     trackUserEngagement: false,
     trackConversions: false,
-    trackCrossDomain: true,
+    trackCrossDomain: false,
     trackBounceRate: false,
     trackReturnVisitors: false,
     trackDeviceInfo: false,
@@ -336,7 +340,8 @@
    * See COMMERCIAL-LICENSE for details.
    */
   var CrossDomainIdentity = {
-    checkForCrossDomainToken: function() {
+    checkForCrossDomainToken: function(isCancelled) {
+      isCancelled = isCancelled || function() { return false; };
       var crossDomainToken = null;
       var tokenSource = null;
       var tokenDetectionTime = performance.now();
@@ -437,6 +442,7 @@
         return response.json();
       })
       .then(function(result) {
+        if (isCancelled()) return false; // startup epoch superseded — discard
         var verificationEndTime = performance.now();
         state.performanceMetrics.timings.tokenVerificationDurationMs = verificationEndTime - verificationStartTime;
         Logger.debug('Token verification duration: ' + state.performanceMetrics.timings.tokenVerificationDurationMs.toFixed(3) + 'ms');
@@ -450,6 +456,7 @@
 
           Security.generateIntegrityHMAC(state.sessionId, domain, state.waiTag)
             .then(function(hmac) {
+              if (isCancelled()) return;
               self.storeIdentityData({
                 sessionId: state.sessionId,
                 waiTag: state.waiTag,
@@ -460,6 +467,7 @@
               });
             })
             .catch(function() {
+              if (isCancelled()) return;
               Logger.error('HMAC generation failed during cross-domain sync — storing without integrity');
               self.storeIdentityData({
                 sessionId: state.sessionId,
@@ -490,9 +498,12 @@
       });
     },
 
-    generateNewIdentity: function() {
+    generateNewIdentity: function(isCancelled) {
+      isCancelled = isCancelled || function() { return false; };
       var self = this;
       var domain = window.location.hostname;
+
+      if (isCancelled()) return Promise.resolve();
 
       state.sessionId = Security.generateSecureId(domain);
       state.waiTag = Security.generateWaiTag(domain);
@@ -506,6 +517,7 @@
 
       return Security.generateIntegrityHMAC(state.sessionId, domain, state.waiTag)
         .then(function(hmac) {
+          if (isCancelled()) return; // superseded — never persist or register stale identity
           var identityData = {
             sessionId: state.sessionId,
             waiTag: state.waiTag,
@@ -520,6 +532,7 @@
           Logger.info('New identity generated:', state.waiTag);
         })
         .catch(function() {
+          if (isCancelled()) return;
           Logger.error('HMAC generation failed — identity stored without integrity (will be rejected on next read if crypto becomes available)');
           var identityData = {
             sessionId: state.sessionId,
@@ -535,6 +548,10 @@
     },
 
     storeIdentityData: function(identityData) {
+      if (state.consent !== 'granted') {
+        Logger.debug('Consent not granted - identity will not be persisted');
+        return;
+      }
       try {
         var cookieData = btoa(JSON.stringify(identityData));
         var cookieFlags = 'path=/; SameSite=Strict; max-age=86400';
@@ -654,6 +671,7 @@
     },
 
     registerIdentityWithServer: function(identityData) {
+      if (state.consent !== 'granted') return; // never register after withdrawal
       fetch(getApiUrl() + '/api/tracking/register-waitag', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -712,11 +730,31 @@
    * Dashboard-controlled tracking via AES-GCM encrypted config.
    * See COMMERCIAL-LICENSE for details.
    */
+  function disableAllFeatures() {
+    Object.keys(TrackingFeatures).forEach(function(feature) {
+      TrackingFeatures[feature] = false;
+    });
+  }
+
+  /**
+   * Fail-closed configuration: tracking features are only enabled when
+   * valid configuration is present. Missing or undecryptable config
+   * leaves every feature disabled.
+   */
   function parseEncryptedConfig(encConfig, custId) {
+    disableAllFeatures();
+
     if (!encConfig) {
-      TrackingFeatures.trackPageViews = true;
-      TrackingFeatures.trackClicks = true;
-      TrackingFeatures.trackCrossDomain = true;
+      if (plainFeatures) {
+        plainFeatures.split(',').forEach(function(feature) {
+          feature = feature.trim();
+          if (TrackingFeatures.hasOwnProperty(feature)) {
+            TrackingFeatures[feature] = true;
+          }
+        });
+      } else {
+        Logger.info('No tracking configuration provided (data-config or data-features) - all tracking disabled (fail closed)');
+      }
       return Promise.resolve(TrackingFeatures);
     }
 
@@ -725,10 +763,7 @@
       .then(function(decryptedData) {
         var cfg = JSON.parse(decryptedData);
 
-        Object.keys(TrackingFeatures).forEach(function(feature) {
-          TrackingFeatures[feature] = false;
-        });
-        TrackingFeatures.trackCrossDomain = true;
+        disableAllFeatures();
 
         if (cfg.features && Array.isArray(cfg.features)) {
           cfg.features.forEach(function(feature) {
@@ -745,9 +780,8 @@
         return TrackingFeatures;
       })
       .catch(function() {
-        TrackingFeatures.trackPageViews = true;
-        TrackingFeatures.trackClicks = true;
-        TrackingFeatures.trackCrossDomain = true;
+        disableAllFeatures();
+        Logger.error('Encrypted configuration could not be decrypted - all tracking disabled (fail closed)');
         return TrackingFeatures;
       });
   }
@@ -799,7 +833,10 @@
         var isAuthorized = securityData.authorizedDomains.some(function(domain) {
           if (domain.startsWith('*.')) {
             var baseDomain = domain.substring(2);
-            return currentDomain.endsWith(baseDomain);
+            if (!baseDomain) return false;
+            // Exact host-boundary match: matches the base domain itself or
+            // a true subdomain, never a lookalike suffix (evilexample.com).
+            return currentDomain === baseDomain || currentDomain.endsWith('.' + baseDomain);
           }
           return domain === currentDomain;
         });
@@ -915,6 +952,7 @@
   }
 
   function queueEvent(eventType, metadata) {
+    if (state.consent !== 'granted') return;
     var event = createEvent(eventType, metadata);
     if (!event) return;
 
@@ -975,6 +1013,7 @@
   var isCircuitBreakerOpen = false;
 
   function sendBatch() {
+    if (state.consent !== 'granted') return;
     if (state.eventQueue.length === 0) return;
     if (isCircuitBreakerOpen) return;
 
@@ -1097,13 +1136,225 @@
     state.listeners.set('visibilitychange', visibilityHandler);
   }
 
+  /**
+   * Consent state machine: 'unknown' -> 'granted' | 'denied',
+   * 'granted' -> 'withdrawn'. Default is NOT tracking: no identity is
+   * created or persisted and no events are queued or sent unless the
+   * state is 'granted'.
+   */
+  var CONSENT_STORAGE_KEY = 'nylo_consent';
+
+  var Consent = {
+    read: function() {
+      try {
+        var stored = localStorage.getItem(CONSENT_STORAGE_KEY);
+        if (stored === 'granted' || stored === 'denied' || stored === 'withdrawn') return stored;
+      } catch (e) {}
+      return 'unknown';
+    },
+
+    persist: function(value) {
+      try { localStorage.setItem(CONSENT_STORAGE_KEY, value); } catch (e) {}
+    },
+
+    /**
+     * Deletes every cookie, storage key and queued event the SDK creates.
+     */
+    purgeAllData: function() {
+      try { document.cookie = 'nylo_wai=; path=/; max-age=0'; } catch (e) {}
+      try {
+        localStorage.removeItem('nylo_cross_domain_identity');
+        localStorage.removeItem('nylo_identity');
+      } catch (e) {}
+      try {
+        sessionStorage.removeItem('nylo_session_identity');
+        sessionStorage.removeItem('nylo_identity');
+      } catch (e) {}
+
+      state.eventQueue = [];
+      state.retryQueue = [];
+      state.sessionId = null;
+      state.waiTag = null;
+      state.userId = null;
+      state.crossDomainData.identitySynced = false;
+      state.crossDomainData.tokenReceived = false;
+      state.crossDomainData.referringDomain = null;
+    }
+  };
+
+  function stopTracking() {
+    if (state.batchTimer) {
+      clearInterval(state.batchTimer);
+      state.batchTimer = null;
+    }
+    state.listeners.forEach(function(handler, event) {
+      if (event === 'scroll' || event === 'mouseover' || event === 'error' ||
+          event === 'unhandledrejection' || event === 'beforeunload') {
+        window.removeEventListener(event, handler);
+      } else {
+        document.removeEventListener(event, handler);
+      }
+    });
+    state.listeners.clear();
+    state.trackingStarted = false;
+    state.trackingEpoch++; // invalidate any in-flight startup work
+  }
+
+  function startTracking() {
+    if (state.trackingStarted || state.consent !== 'granted') return;
+    state.trackingStarted = true;
+
+    var epoch = state.trackingEpoch;
+    function cancelled() {
+      return epoch !== state.trackingEpoch || state.consent !== 'granted';
+    }
+
+    var identityPromise;
+
+    if (config.anonymousMode) {
+      state.sessionId = 'anon_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 10);
+      state.waiTag = null;
+      state.userId = null;
+      Logger.info('Anonymous mode - no identity tracking');
+      identityPromise = Promise.resolve();
+    } else {
+      identityPromise = CrossDomainIdentity.checkForCrossDomainToken(cancelled)
+        .then(function(crossDomainSuccess) {
+          if (cancelled()) return;
+          if (!crossDomainSuccess) {
+            return CrossDomainIdentity.getStoredIdentityData()
+              .then(function(storedIdentity) {
+                if (cancelled()) return;
+                if (storedIdentity && storedIdentity.sessionId && storedIdentity.waiTag) {
+                  state.sessionId = storedIdentity.sessionId;
+                  state.waiTag = storedIdentity.waiTag;
+                  state.userId = storedIdentity.userId;
+                } else {
+                  return CrossDomainIdentity.generateNewIdentity(cancelled);
+                }
+              });
+          }
+        });
+    }
+
+    return identityPromise
+      .then(function() {
+        if (cancelled()) return Promise.reject({ nyloCancelled: true });
+        return parseEncryptedConfig(encryptedConfig, customerId);
+      })
+      .then(function() {
+        if (cancelled()) return Promise.reject({ nyloCancelled: true });
+        Tracking.pageView({
+          initializationType: config.anonymousMode ? 'anonymous_session'
+            : (state.crossDomainData.identitySynced ? 'cross_domain_arrival' : 'new_session'),
+          waiTag: state.waiTag
+        });
+
+        setupEventListeners();
+        setupPageLifecycle();
+
+        state.batchTimer = setInterval(sendBatch, config.batchInterval);
+
+        var duration = Performance.measure('init', 'init-start');
+        state.performanceMetrics.timings.sdkInitDurationMs = duration || 0;
+        Logger.info('Tracking started (' + (duration || 0).toFixed(2) + 'ms)');
+
+        window.dispatchEvent(new CustomEvent('nyloInitialized', {
+          detail: {
+            version: config.version,
+            waiTag: state.waiTag,
+            crossDomainEnabled: !config.anonymousMode
+          }
+        }));
+      })
+      .catch(function(error) {
+        if (error && error.nyloCancelled) {
+          Logger.info('Tracking startup cancelled - consent revoked during initialization');
+          // Only purge when consent is still not granted; a newer granted
+          // epoch's data must never be erased by a stale cancelled startup.
+          if (state.consent !== 'granted') Consent.purgeAllData();
+          return;
+        }
+        Logger.error('Tracking startup failed:', error);
+      });
+  }
+
+  function buildApi() {
+    return {
+      track: Tracking.customEvent,
+      trackConversion: Tracking.conversion,
+      identify: function(userId) {
+        if (state.consent !== 'granted' || config.anonymousMode) {
+          Logger.info('identify() ignored - consent not granted or anonymous mode');
+          return;
+        }
+        state.userId = Security.sanitize(userId);
+        CrossDomainIdentity.getStoredIdentityData()
+          .then(function(identityData) {
+            if (identityData) {
+              identityData.userId = state.userId;
+              return Security.generateIntegrityHMAC(
+                identityData.sessionId, identityData.domain || '', identityData.waiTag
+              ).then(function(hmac) {
+                identityData.integrity = hmac;
+                CrossDomainIdentity.storeIdentityData(identityData);
+              });
+            }
+          })
+          .catch(function() {});
+      },
+      getSession: function() {
+        return {
+          sessionId: state.sessionId,
+          waiTag: state.waiTag,
+          userId: state.userId,
+          customerId: customerId,
+          queueSize: state.eventQueue.length,
+          crossDomainSynced: state.crossDomainData.identitySynced
+        };
+      },
+      getCrossDomainIdentity: function() {
+        return {
+          waiTag: state.waiTag,
+          identitySynced: state.crossDomainData.identitySynced,
+          referringDomain: state.crossDomainData.referringDomain
+        };
+      },
+      setConsent: function(consent) {
+        if (consent && consent.analytics === false) {
+          var wasGranted = state.consent === 'granted';
+          state.consent = wasGranted ? 'withdrawn' : 'denied';
+          Consent.persist(state.consent);
+          stopTracking();
+          Consent.purgeAllData();
+          Logger.info(wasGranted
+            ? 'Consent withdrawn - all identity data and queued events deleted'
+            : 'Consent denied - tracking remains disabled');
+        } else if (consent && consent.analytics === true) {
+          state.consent = 'granted';
+          Consent.persist('granted');
+          startTracking();
+          Logger.info('Consent granted - tracking enabled');
+        }
+      },
+      getConsent: function() {
+        return { analytics: state.consent === 'granted', state: state.consent };
+      },
+      flush: sendBatch,
+      getMetrics: Performance.getMetrics,
+      getTimingMetrics: Performance.getTimingMetrics,
+      getFeatures: function() { return Object.assign({}, TrackingFeatures); },
+      getEarlyCleanupScript: EarlyCleanup.getScript,
+      version: config.version,
+      destroy: cleanup
+    };
+  }
+
   function initialize() {
     if (state.initialized) return;
 
     Performance.mark('init-start');
     Logger.info('Initializing Nylo v' + config.version + ' for customer ' + customerId);
-
-    var initPromise = Promise.resolve();
 
     if (encryptedSecurity) {
       var isAuthorized = validateDomainAuthorization(encryptedSecurity);
@@ -1120,217 +1371,15 @@
       config.allowQueryParamTokens = true;
     }
 
-    if (config.anonymousMode) {
-      state.sessionId = 'anon_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 10);
-      state.waiTag = null;
-      state.userId = null;
-      Logger.info('Anonymous mode - no identity tracking');
+    state.consent = Consent.read();
+    window.Nylo = buildApi();
+    state.initialized = true;
 
-      parseEncryptedConfig(encryptedConfig, customerId)
-        .then(function() {
-          Tracking.pageView({
-            initializationType: 'anonymous_session',
-            waiTag: null
-          });
-
-          setupEventListeners();
-          setupPageLifecycle();
-
-          state.batchTimer = setInterval(sendBatch, config.batchInterval);
-
-          window.Nylo = {
-            track: Tracking.customEvent,
-            trackConversion: Tracking.conversion,
-            identify: function() {
-              Logger.info('identify() is a no-op in anonymous mode');
-            },
-            getSession: function() {
-              return {
-                sessionId: state.sessionId,
-                waiTag: null,
-                userId: null,
-                customerId: customerId,
-                queueSize: state.eventQueue.length,
-                crossDomainSynced: false
-              };
-            },
-            getCrossDomainIdentity: function() {
-              return {
-                waiTag: null,
-                identitySynced: false,
-                referringDomain: null
-              };
-            },
-            setConsent: function(consent) {
-              if (consent && consent.analytics === false) {
-                state.waiTag = null;
-                state.userId = null;
-                state.crossDomainData.identitySynced = false;
-                config.anonymousMode = true;
-                try { localStorage.removeItem('nylo_identity'); } catch(e) {}
-                try { sessionStorage.removeItem('nylo_identity'); } catch(e) {}
-                Logger.info('Consent denied - switched to anonymous mode');
-              } else if (consent && consent.analytics === true) {
-                config.anonymousMode = false;
-                CrossDomainIdentity.getStoredIdentityData()
-                  .then(function(storedIdentity) {
-                    if (storedIdentity && storedIdentity.sessionId && storedIdentity.waiTag) {
-                      state.sessionId = storedIdentity.sessionId;
-                      state.waiTag = storedIdentity.waiTag;
-                      state.userId = storedIdentity.userId;
-                    } else {
-                      return CrossDomainIdentity.generateNewIdentity();
-                    }
-                  })
-                  .then(function() {
-                    CrossDomainIdentity.checkForCrossDomainToken();
-                    Logger.info('Consent granted - identity tracking enabled');
-                  });
-              }
-            },
-            getConsent: function() {
-              return { analytics: !config.anonymousMode };
-            },
-            flush: sendBatch,
-            getMetrics: Performance.getMetrics,
-            getTimingMetrics: Performance.getTimingMetrics,
-            getFeatures: function() { return Object.assign({}, TrackingFeatures); },
-            getEarlyCleanupScript: EarlyCleanup.getScript,
-            version: config.version,
-            destroy: cleanup
-          };
-
-          state.initialized = true;
-
-          var duration = Performance.measure('init', 'init-start');
-          state.performanceMetrics.timings.sdkInitDurationMs = duration || 0;
-          Logger.info('Initialization complete (' + (duration || 0).toFixed(2) + 'ms)');
-
-          window.dispatchEvent(new CustomEvent('nyloInitialized', {
-            detail: {
-              version: config.version,
-              waiTag: state.waiTag,
-              crossDomainEnabled: false
-            }
-          }));
-        })
-        .catch(function(error) {
-          Logger.error('Initialization failed:', error);
-          Tracking.error(error, { context: 'initialization' });
-        });
-      return;
+    if (state.consent === 'granted') {
+      startTracking();
+    } else {
+      Logger.info('Consent state is "' + state.consent + '" - tracking disabled until Nylo.setConsent({ analytics: true }) is called');
     }
-
-    CrossDomainIdentity.checkForCrossDomainToken()
-      .then(function(crossDomainSuccess) {
-        if (!crossDomainSuccess) {
-          return CrossDomainIdentity.getStoredIdentityData()
-            .then(function(storedIdentity) {
-              if (storedIdentity && storedIdentity.sessionId && storedIdentity.waiTag) {
-                state.sessionId = storedIdentity.sessionId;
-                state.waiTag = storedIdentity.waiTag;
-                state.userId = storedIdentity.userId;
-              } else {
-                return CrossDomainIdentity.generateNewIdentity();
-              }
-            });
-        }
-      })
-      .then(function() {
-        return parseEncryptedConfig(encryptedConfig, customerId);
-      })
-      .then(function() {
-        Tracking.pageView({
-          initializationType: state.crossDomainData.identitySynced ? 'cross_domain_arrival' : 'new_session',
-          waiTag: state.waiTag
-        });
-
-        setupEventListeners();
-        setupPageLifecycle();
-
-        state.batchTimer = setInterval(sendBatch, config.batchInterval);
-
-        window.Nylo = {
-          track: Tracking.customEvent,
-          trackConversion: Tracking.conversion,
-          identify: function(userId) {
-            state.userId = Security.sanitize(userId);
-            CrossDomainIdentity.getStoredIdentityData()
-              .then(function(identityData) {
-                if (identityData) {
-                  identityData.userId = state.userId;
-                  return Security.generateIntegrityHMAC(
-                    identityData.sessionId, identityData.domain || '', identityData.waiTag
-                  ).then(function(hmac) {
-                    identityData.integrity = hmac;
-                    CrossDomainIdentity.storeIdentityData(identityData);
-                  });
-                }
-              })
-              .catch(function() {});
-          },
-          getSession: function() {
-            return {
-              sessionId: state.sessionId,
-              waiTag: state.waiTag,
-              userId: state.userId,
-              customerId: customerId,
-              queueSize: state.eventQueue.length,
-              crossDomainSynced: state.crossDomainData.identitySynced
-            };
-          },
-          getCrossDomainIdentity: function() {
-            return {
-              waiTag: state.waiTag,
-              identitySynced: state.crossDomainData.identitySynced,
-              referringDomain: state.crossDomainData.referringDomain
-            };
-          },
-          setConsent: function(consent) {
-            if (consent && consent.analytics === false) {
-              state.waiTag = null;
-              state.userId = null;
-              state.crossDomainData.identitySynced = false;
-              config.anonymousMode = true;
-              try { localStorage.removeItem('nylo_identity'); } catch(e) {}
-              try { sessionStorage.removeItem('nylo_identity'); } catch(e) {}
-              Logger.info('Consent denied - switched to anonymous mode');
-            } else if (consent && consent.analytics === true) {
-              config.anonymousMode = false;
-              CrossDomainIdentity.generateNewIdentity();
-              Logger.info('Consent granted - identity tracking enabled');
-            }
-          },
-          getConsent: function() {
-            return { analytics: !config.anonymousMode };
-          },
-          flush: sendBatch,
-          getMetrics: Performance.getMetrics,
-          getTimingMetrics: Performance.getTimingMetrics,
-          getFeatures: function() { return Object.assign({}, TrackingFeatures); },
-          getEarlyCleanupScript: EarlyCleanup.getScript,
-          version: config.version,
-          destroy: cleanup
-        };
-
-        state.initialized = true;
-
-        var duration = Performance.measure('init', 'init-start');
-        state.performanceMetrics.timings.sdkInitDurationMs = duration || 0;
-        Logger.info('Initialization complete (' + (duration || 0).toFixed(2) + 'ms)');
-
-        window.dispatchEvent(new CustomEvent('nyloInitialized', {
-          detail: {
-            version: config.version,
-            waiTag: state.waiTag,
-            crossDomainEnabled: true
-          }
-        }));
-      })
-      .catch(function(error) {
-        Logger.error('Initialization failed:', error);
-        Tracking.error(error, { context: 'initialization' });
-      });
   }
 
   var EarlyCleanup = {

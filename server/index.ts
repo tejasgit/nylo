@@ -11,8 +11,8 @@
 import express from 'express';
 import { registerTrackingRoutes } from './api/tracking';
 import { registerWaiTagTrackingRoutes } from './api/waitag-tracking';
-import { registerTrackingSyncRoutes } from './api/tracking-sync';
 import { registerDnsVerificationRoutes } from './api/dns-verify';
+import { originAllowed } from './utils/security-core';
 
 export interface NyloServerOptions {
   allowedOrigins?: string[];
@@ -45,30 +45,33 @@ export function setupNyloRoutes(app: express.Express, storage: any, options?: Ny
     next();
   });
 
+  // Centralized CORS. Exact-origin allowlist with host-boundary wildcard
+  // matching; no arbitrary-origin reflection. Fail-closed: when no
+  // allowlist is configured, production denies all cross-origin requests
+  // and development only allows loopback origins.
+  const isProduction = process.env.NODE_ENV === 'production';
+  if (allowedOrigins.length === 0) {
+    if (isProduction) {
+      console.error('[Nylo] SECURITY: No allowedOrigins configured — all cross-origin requests will be rejected. Set allowedOrigins.');
+    } else {
+      console.warn('[Nylo] No allowedOrigins configured — only loopback origins (localhost/127.0.0.1) are allowed in development.');
+    }
+  }
+
   app.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
     const origin = req.headers.origin;
-    if (origin) {
-      if (allowedOrigins.length === 0) {
-        console.warn('[Nylo] WARNING: No allowedOrigins configured — CORS is open to all origins. Set allowedOrigins in production.');
-      }
-
-      const isAllowed = allowedOrigins.length === 0 || allowedOrigins.some(allowed => {
-        if (allowed.startsWith('*.')) {
-          return origin.endsWith(allowed.substring(1)) || origin === 'https://' + allowed.substring(2) || origin === 'http://' + allowed.substring(2);
-        }
-        return origin === 'https://' + allowed || origin === 'http://' + allowed || origin === allowed;
-      });
-
-      if (isAllowed) {
-        res.header('Access-Control-Allow-Origin', origin);
-        res.header('Access-Control-Allow-Credentials', 'true');
-        res.header('Access-Control-Allow-Headers',
-          'Origin, X-Requested-With, Content-Type, Accept, X-API-Key, X-Customer-ID, X-Session-ID, X-WaiTag, X-Batch-Size, X-SDK-Version');
-        res.header('Access-Control-Expose-Headers',
-          'X-WaiTag, X-Cross-Domain-WaiTag, X-Session-ID');
-      }
+    res.header('Vary', 'Origin');
+    if (origin && originAllowed(origin, allowedOrigins, { production: isProduction, allowDevLoopback: true })) {
+      res.header('Access-Control-Allow-Origin', origin);
+      res.header('Access-Control-Allow-Credentials', 'true');
+      res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+      res.header('Access-Control-Allow-Headers',
+        'Origin, X-Requested-With, Content-Type, Accept, X-API-Key, X-Customer-ID, X-Session-ID, X-WaiTag, X-Batch-Size, X-SDK-Version');
+      res.header('Access-Control-Expose-Headers',
+        'X-WaiTag, X-Cross-Domain-WaiTag, X-Session-ID');
+      res.header('Access-Control-Max-Age', '86400');
     }
-    if (req.method === 'OPTIONS') return res.status(200).send();
+    if (req.method === 'OPTIONS') return res.status(204).send();
     next();
   });
 
@@ -76,7 +79,9 @@ export function setupNyloRoutes(app: express.Express, storage: any, options?: Ny
   const RATE_LIMIT_WINDOW = 60 * 1000;
   const RATE_LIMIT_MAX = 100;
 
-  setInterval(() => { rateLimitMap.clear(); }, RATE_LIMIT_WINDOW);
+  // unref() so this housekeeping timer never keeps the process alive.
+  const rateLimitTimer = setInterval(() => { rateLimitMap.clear(); }, RATE_LIMIT_WINDOW);
+  if (typeof rateLimitTimer.unref === 'function') rateLimitTimer.unref();
 
   app.use('/api/', (req: express.Request, res: express.Response, next: express.NextFunction) => {
     const key = req.ip || 'unknown';
@@ -96,13 +101,11 @@ export function setupNyloRoutes(app: express.Express, storage: any, options?: Ny
 
   registerTrackingRoutes(app, storage);
   registerWaiTagTrackingRoutes(app, storage);
-  registerTrackingSyncRoutes(app, storage);
   registerDnsVerificationRoutes(app, storage);
 }
 
 export { registerTrackingRoutes } from './api/tracking';
 export { registerWaiTagTrackingRoutes, TokenReplayStore } from './api/waitag-tracking';
-export { registerTrackingSyncRoutes } from './api/tracking-sync';
 export { registerDnsVerificationRoutes } from './api/dns-verify';
 export { generateWaiTagId, generateSessionId, generateApiKey } from './utils/secure-id';
 export {

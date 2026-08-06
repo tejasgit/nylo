@@ -73,13 +73,7 @@ function validateAndSanitizeEvent(eventItem: any): any | null {
 }
 
 export function registerTrackingRoutes(app: any, storage: TrackingStorage) {
-  app.options("/api/track", (req: Request, res: Response) => {
-    res.header('Access-Control-Allow-Methods', 'POST, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Content-Type, X-Customer-ID, X-Session-ID, X-WaiTag, X-Batch-Size, X-SDK-Version');
-    res.header('Access-Control-Allow-Credentials', 'true');
-    res.status(200).send();
-  });
-
+  // CORS (including OPTIONS preflight) is handled centrally in server/index.ts.
   app.post("/api/track", async (req: Request, res: Response) => {
     try {
       const events = req.body.events || [req.body];
