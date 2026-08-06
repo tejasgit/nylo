@@ -82,6 +82,10 @@ app.get('/nylo.js', (req, res) => {
   res.sendFile(path.join(__dirname, '..', 'src', 'nylo.js'));
 });
 
+app.get('/', (req, res) => {
+  res.redirect('/demo.html');
+});
+
 app.use(express.static(path.join(__dirname)));
 
 const interactions = [];
