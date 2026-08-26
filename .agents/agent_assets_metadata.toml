@@ -1,0 +1,9 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "hLb_-Fx4peXakZgzTXoBi"
+uri = "file://github/COLLABORATOR-ISSUES.md"
+type = "text"
+title = "Nylo — Collaborator Issue Log (10 issues)"
+description = "Copy-ready issue log with the ten deferred lower-priority items: positioning, trademark diligence, license separation, signed config, distributed abuse controls, DSAR/GPC compliance, CI/browser gates, versioning policy, admin security UX, and DNS re-verification/key rotation. Each issue includes background, evidence, impact, scope, acceptance criteria, files, dependencies, and labels."

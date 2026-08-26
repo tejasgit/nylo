@@ -21,3 +21,7 @@ replit.md
 .upm/
 .cache/
 attached_assets/
+
+# Internal workspace files (outside the public repository boundary)
+github/
+scripts/post-merge.sh
