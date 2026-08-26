@@ -370,8 +370,17 @@ export function registerWaiTagTrackingRoutes(app: any, storage: WaiTagStorage) {
 
       const { waiTag, sessionId, userId, sourceDomain, destinationDomain, customerId } = req.body || {};
 
-      if (!waiTag || !sessionId) {
-        return res.status(400).json({ success: false, message: 'waiTag and sessionId are required' });
+      let validWaiTag: string;
+      let validSessionId: string;
+      try {
+        validWaiTag = validateWaiTagId(String(waiTag || ''));
+        validSessionId = validateSessionId(String(sessionId || ''));
+      } catch {
+        return res.status(400).json({ success: false, message: 'Invalid waiTag or sessionId format' });
+      }
+      if (userId !== undefined && userId !== null &&
+          (typeof userId !== 'string' || userId.length > 256)) {
+        return res.status(400).json({ success: false, message: 'Invalid userId format' });
       }
       if (customerId !== undefined && customerId !== null && String(customerId) !== String(tenantId)) {
         return res.status(403).json({
@@ -406,8 +415,8 @@ export function registerWaiTagTrackingRoutes(app: any, storage: WaiTagStorage) {
         tenantId,
         sourceDomain: validSource,
         destinationDomain: validDestination,
-        waiTag,
-        sessionId,
+        waiTag: validWaiTag,
+        sessionId: validSessionId,
         userId: userId || null
       }, tokenSecret);
 

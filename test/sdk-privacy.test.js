@@ -225,6 +225,34 @@ test('custom event metadata is stripped client-side: fingerprint keys and URL qu
   assert.strictEqual(raw.includes('frag'), false, 'URL fragment stripped from metadata values');
 });
 
+test('deep and cyclic metadata cannot bypass client-side privacy stripping', async () => {
+  const env = loadSdk({ attrs: { 'data-features': FEATURES } });
+  env.Nylo.setConsent({ analytics: true });
+  await env.flush();
+
+  const deep = {};
+  let cursor = deep;
+  for (let i = 0; i < 8; i++) {
+    cursor.next = {};
+    cursor = cursor.next;
+  }
+  cursor.userAgent = 'deep-fingerprint';
+  cursor.url = 'https://example.com/path?email=deep@example.com#secret';
+  deep.cycle = deep;
+
+  env.Nylo.track('custom_event', deep);
+  env.Nylo.flush();
+  await env.flush();
+  await env.flush();
+
+  const trackCalls = env.fetchCalls.filter((c) => String(c.url).endsWith('/api/track'));
+  assert.ok(trackCalls.length >= 1, 'batch was sent without cyclic serialization failure');
+  const raw = String(trackCalls[trackCalls.length - 1].options.body).toLowerCase();
+  assert.strictEqual(raw.includes('deep-fingerprint'), false);
+  assert.strictEqual(raw.includes('deep@example.com'), false);
+  assert.strictEqual(raw.includes('#secret'), false);
+});
+
 test('tracking fails closed when secure randomness is unavailable: no identity, no writes', async () => {
   const env = loadSdk({ attrs: { 'data-features': FEATURES }, noCrypto: true });
   env.Nylo.setConsent({ analytics: true });

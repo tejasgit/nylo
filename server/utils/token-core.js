@@ -40,6 +40,10 @@ const crypto = require('crypto');
 const TOKEN_VERSION = 2;
 const DEFAULT_TTL_MS = 5 * 60 * 1000;
 const MAX_CLOCK_SKEW_MS = 60 * 1000;
+const MAX_TOKEN_CHARS = 16 * 1024;
+const MAX_CIPHERTEXT_BYTES = 8 * 1024;
+const GCM_IV_BYTES = 12;
+const GCM_TAG_BYTES = 16;
 
 const HKDF_SALT = 'nylo-wtx1-v2';
 const AAD_PREFIX = 'WTX1|v2|';
@@ -144,6 +148,9 @@ function signCrossDomainToken(claims, secret, opts) {
 function verifyCrossDomainToken(token, secret, opts) {
   opts = opts || {};
   if (!secret) return { valid: false, payload: null, error: 'NO_SECRET' };
+  if (typeof token !== 'string' || token.length === 0 || token.length > MAX_TOKEN_CHARS) {
+    return { valid: false, payload: null, error: 'MALFORMED_TOKEN' };
+  }
 
   let envelope;
   try {
@@ -168,6 +175,19 @@ function verifyCrossDomainToken(token, secret, opts) {
       typeof envelope.ct !== 'string' || envelope.ct === '') {
     return { valid: false, payload: null, error: 'MALFORMED_TOKEN' };
   }
+  if (envelope.tid.length > 128 || envelope.dst.length > 253 ||
+      envelope.iv.length > 32 || envelope.tag.length > 32 ||
+      envelope.ct.length > Math.ceil(MAX_CIPHERTEXT_BYTES * 4 / 3) + 4) {
+    return { valid: false, payload: null, error: 'MALFORMED_TOKEN' };
+  }
+
+  const iv = Buffer.from(envelope.iv, 'base64');
+  const tag = Buffer.from(envelope.tag, 'base64');
+  const ciphertext = Buffer.from(envelope.ct, 'base64');
+  if (iv.length !== GCM_IV_BYTES || tag.length !== GCM_TAG_BYTES ||
+      ciphertext.length === 0 || ciphertext.length > MAX_CIPHERTEXT_BYTES) {
+    return { valid: false, payload: null, error: 'MALFORMED_TOKEN' };
+  }
 
   // Cheap pre-decryption routing checks give precise error codes; the
   // cryptographic binding below re-enforces both regardless.
@@ -183,10 +203,10 @@ function verifyCrossDomainToken(token, secret, opts) {
   let plaintext;
   try {
     const encKey = deriveTokenKey(secret, 'enc', envelope.tid, envelope.dst);
-    const decipher = crypto.createDecipheriv('aes-256-gcm', encKey, Buffer.from(envelope.iv, 'base64'));
+    const decipher = crypto.createDecipheriv('aes-256-gcm', encKey, iv);
     decipher.setAAD(tokenAad(envelope.tid, envelope.dst));
-    decipher.setAuthTag(Buffer.from(envelope.tag, 'base64'));
-    plaintext = Buffer.concat([decipher.update(Buffer.from(envelope.ct, 'base64')), decipher.final()]).toString('utf-8');
+    decipher.setAuthTag(tag);
+    plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf-8');
   } catch {
     // Wrong key (wrong secret, tenant or destination) or tampered
     // ciphertext/AAD — all surface as an AEAD authentication failure.

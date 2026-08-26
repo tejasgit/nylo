@@ -104,6 +104,18 @@ test('malformed token is rejected', () => {
   assert.strictEqual(verifyCrossDomainToken('not-base64-json', SECRET).error, 'MALFORMED_TOKEN');
 });
 
+test('oversized and malformed encrypted envelopes are rejected before decryption', () => {
+  assert.strictEqual(verifyCrossDomainToken('A'.repeat(16 * 1024 + 1), SECRET).error, 'MALFORMED_TOKEN');
+
+  const envelope = decodeEnvelope(signCrossDomainToken(CLAIMS, SECRET));
+  envelope.iv = Buffer.alloc(1024).toString('base64');
+  assert.strictEqual(verifyCrossDomainToken(encodeEnvelope(envelope), SECRET).error, 'MALFORMED_TOKEN');
+
+  const badTag = decodeEnvelope(signCrossDomainToken(CLAIMS, SECRET));
+  badTag.tag = Buffer.alloc(15).toString('base64');
+  assert.strictEqual(verifyCrossDomainToken(encodeEnvelope(badTag), SECRET).error, 'MALFORMED_TOKEN');
+});
+
 test('legacy v1 signed-cleartext token is rejected', () => {
   const legacyPayload = {
     v: 1, jti: 'x'.repeat(32), iat: Date.now(), exp: Date.now() + 60000,

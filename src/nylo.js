@@ -510,49 +510,45 @@
         Logger.debug('Token verification duration: ' + state.performanceMetrics.timings.tokenVerificationDurationMs.toFixed(3) + 'ms');
 
         if (result.success && result.identity) {
-          state.sessionId = result.identity.sessionId;
-          state.waiTag = result.identity.waiTag;
-          state.userId = result.identity.userId;
-          state.crossDomainData.identitySynced = true;
-          state.performanceMetrics.crossDomainSyncs++;
+          var verifiedIdentity = {
+            sessionId: result.identity.sessionId,
+            waiTag: result.identity.waiTag,
+            userId: result.identity.userId
+          };
 
-          Security.generateIntegrityHMAC(state.sessionId, domain, state.waiTag)
+          return Security.generateIntegrityHMAC(verifiedIdentity.sessionId, domain, verifiedIdentity.waiTag)
             .then(function(hmac) {
-              if (isCancelled()) return;
+              if (isCancelled()) return false;
+              state.sessionId = verifiedIdentity.sessionId;
+              state.waiTag = verifiedIdentity.waiTag;
+              state.userId = verifiedIdentity.userId;
+              state.crossDomainData.identitySynced = true;
+              state.performanceMetrics.crossDomainSyncs++;
               self.storeIdentityData({
-                sessionId: state.sessionId,
-                waiTag: state.waiTag,
-                userId: state.userId,
+                sessionId: verifiedIdentity.sessionId,
+                waiTag: verifiedIdentity.waiTag,
+                userId: verifiedIdentity.userId,
                 domain: domain,
                 syncedAt: new Date().toISOString(),
                 lastUsedAt: new Date().toISOString(),
                 integrity: hmac
               });
+
+              self.trackCrossDomainEvent('cross_domain_arrival', {
+                referringDomain: state.crossDomainData.referringDomain,
+                tokenVerified: true,
+                identityPreserved: true,
+                timings: state.performanceMetrics.timings
+              });
+
+              self.notifyContextPreserved('cross_domain');
+              Logger.info('Cross-domain identity synchronized');
+              return true;
             })
             .catch(function() {
-              if (isCancelled()) return;
-              Logger.error('HMAC generation failed during cross-domain sync — storing without integrity');
-              self.storeIdentityData({
-                sessionId: state.sessionId,
-                waiTag: state.waiTag,
-                userId: state.userId,
-                domain: domain,
-                syncedAt: new Date().toISOString(),
-                lastUsedAt: new Date().toISOString(),
-                integrity: null
-              });
+              Logger.error('HMAC generation failed during cross-domain sync — identity discarded');
+              return false;
             });
-
-          self.trackCrossDomainEvent('cross_domain_arrival', {
-            referringDomain: state.crossDomainData.referringDomain,
-            tokenVerified: true,
-            identityPreserved: true,
-            timings: state.performanceMetrics.timings
-          });
-
-          self.notifyContextPreserved('cross_domain');
-          Logger.info('Cross-domain identity synchronized');
-          return true;
         }
         return false;
       })
@@ -571,15 +567,13 @@
 
       if (isCancelled()) return Promise.resolve();
 
-      state.sessionId = Security.generateSecureId(domain);
+      var sessionId = Security.generateSecureId(domain);
 
-      if (!state.sessionId) {
+      if (!sessionId) {
         // Fail closed: without Web Crypto there are no unpredictable
         // identifiers. A timestamp-derived fallback would be a guessable
         // identity, so no identity is created and tracking does not start.
         Logger.error('Secure randomness unavailable - tracking disabled (no predictable fallback identity)');
-        state.sessionId = null;
-        state.waiTag = null;
         state.trackingStarted = false;
         return Promise.reject({ nyloAborted: 'crypto_unavailable' });
       }
@@ -594,15 +588,16 @@
           state.trackingStarted = false;
           throw { nyloAborted: 'crypto_unavailable' };
         }
-        state.waiTag = waiTag;
         var nowIso = new Date().toISOString();
 
-        return Security.generateIntegrityHMAC(state.sessionId, domain, state.waiTag)
+        return Security.generateIntegrityHMAC(sessionId, domain, waiTag)
           .then(function(hmac) {
             if (isCancelled()) return; // superseded — never persist or register stale identity
+            state.sessionId = sessionId;
+            state.waiTag = waiTag;
             var identityData = {
-              sessionId: state.sessionId,
-              waiTag: state.waiTag,
+              sessionId: sessionId,
+              waiTag: waiTag,
               userId: state.userId,
               domain: domain,
               createdAt: nowIso,
@@ -612,22 +607,12 @@
 
             self.storeIdentityData(identityData);
             self.registerIdentityWithServer(identityData);
-            Logger.info('New identity generated:', state.waiTag);
+            Logger.info('New identity generated:', waiTag);
           })
           .catch(function() {
-            if (isCancelled()) return;
-            Logger.error('HMAC generation failed — identity stored without integrity (will be rejected on next read if crypto becomes available)');
-            var identityData = {
-              sessionId: state.sessionId,
-              waiTag: state.waiTag,
-              userId: state.userId,
-              domain: domain,
-              createdAt: nowIso,
-              lastUsedAt: nowIso,
-              integrity: null
-            };
-            self.storeIdentityData(identityData);
-            self.registerIdentityWithServer(identityData);
+            Logger.error('HMAC generation failed — identity discarded');
+            state.trackingStarted = false;
+            throw { nyloAborted: 'integrity_unavailable' };
           });
       });
     },
@@ -1146,18 +1131,27 @@
     return false;
   }
 
-  function sanitizeMetadataForTransport(value, depth) {
+  function sanitizeMetadataForTransport(value, depth, seen) {
     depth = depth || 0;
-    if (depth > 6 || value === null || value === undefined) return value;
+    seen = seen || [];
+    if (value === null || value === undefined) return value;
+    // Never return an unsanitized subtree. Over-deep or cyclic metadata is
+    // replaced with null so fingerprint/URL fields cannot bypass recursion.
+    if (depth > 6) return null;
     if (typeof value === 'string') {
       if (/^https?:\/\//i.test(value.trim())) return sanitizeUrlForTransport(value);
       return value;
     }
+    if (typeof value === 'object') {
+      if (seen.indexOf(value) !== -1) return null;
+      seen.push(value);
+    }
     if (Object.prototype.toString.call(value) === '[object Array]') {
       var arr = [];
       for (var i = 0; i < value.length; i++) {
-        arr.push(sanitizeMetadataForTransport(value[i], depth + 1));
+        arr.push(sanitizeMetadataForTransport(value[i], depth + 1, seen));
       }
+      seen.pop();
       return arr;
     }
     if (typeof value === 'object') {
@@ -1165,8 +1159,9 @@
       for (var key in value) {
         if (!Object.prototype.hasOwnProperty.call(value, key)) continue;
         if (isForbiddenMetadataKey(key)) continue;
-        out[key] = sanitizeMetadataForTransport(value[key], depth + 1);
+        out[key] = sanitizeMetadataForTransport(value[key], depth + 1, seen);
       }
+      seen.pop();
       return out;
     }
     return value;
@@ -1817,6 +1812,11 @@
        */
       resetContext: function() {
         if (config.anonymousMode) return Promise.resolve(false);
+        state.trackingEpoch++;
+        var resetEpoch = state.trackingEpoch;
+        function resetCancelled() {
+          return resetEpoch !== state.trackingEpoch || state.consent !== 'granted';
+        }
         CrossDomainIdentity.purgeIdentityStorage();
         state.sessionId = null;
         state.waiTag = null;
@@ -1826,8 +1826,8 @@
         state.crossDomainData.referringDomain = null;
         Logger.info('Context reset — stored identity deleted');
         if (state.consent === 'granted' && state.trackingStarted) {
-          return CrossDomainIdentity.generateNewIdentity()
-            .then(function() { return true; })
+          return CrossDomainIdentity.generateNewIdentity(resetCancelled)
+            .then(function() { return !resetCancelled(); })
             .catch(function() { return false; });
         }
         return Promise.resolve(true);
