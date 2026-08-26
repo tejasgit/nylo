@@ -219,3 +219,45 @@ test('withdraw during gated startup: releasing the stale startup leaves everythi
   assert.strictEqual(env.Nylo.getSession().queueSize, 0);
   assert.strictEqual(env.fetchCalls.length, 0, 'no network traffic from the cancelled startup');
 });
+
+test('reset while registration awaits a grant never uploads the pre-reset identity', async () => {
+  let releaseGrant;
+  let grantRequested;
+  const grantRequestSeen = new Promise((resolve) => { grantRequested = resolve; });
+  const pendingGrant = new Promise((resolve) => { releaseGrant = resolve; });
+  const env = loadSdk({
+    attrs: { 'data-features': FEATURES },
+    fetchHandler: (url) => {
+      if (String(url).includes('/api/tracking/grant')) {
+        grantRequested();
+        return pendingGrant;
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ success: true }) });
+    }
+  });
+
+  env.Nylo.setConsent({ analytics: true });
+  await grantRequestSeen;
+  const oldWaiTag = env.Nylo.getSession().waiTag;
+  assert.ok(oldWaiTag, 'initial identity exists while registration awaits grant');
+
+  const reset = env.Nylo.resetContext();
+  releaseGrant({
+    ok: true,
+    json: () => Promise.resolve({
+      success: true,
+      grant: 'test-grant-payload.test-signature',
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString()
+    })
+  });
+  assert.strictEqual(await reset, true);
+  await env.flush();
+  await env.flush();
+
+  const liveWaiTag = env.Nylo.getSession().waiTag;
+  assert.ok(liveWaiTag);
+  assert.notStrictEqual(liveWaiTag, oldWaiTag, 'reset minted an unlinked identity');
+  const registrations = env.fetchCalls.filter((call) => String(call.url).includes('register-waitag'));
+  assert.strictEqual(registrations.length, 1, 'only the post-reset identity is registered');
+  assert.strictEqual(JSON.parse(registrations[0].options.body).waiTag, liveWaiTag);
+});

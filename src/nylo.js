@@ -606,7 +606,7 @@
             };
 
             self.storeIdentityData(identityData);
-            self.registerIdentityWithServer(identityData);
+            self.registerIdentityWithServer(identityData, isCancelled);
             Logger.info('New identity generated:', waiTag);
           })
           .catch(function() {
@@ -805,13 +805,14 @@
       });
     },
 
-    registerIdentityWithServer: function(identityData) {
-      if (state.consent !== 'granted') return; // never register after withdrawal
+    registerIdentityWithServer: function(identityData, isCancelled) {
+      isCancelled = isCancelled || function() { return false; };
+      if (state.consent !== 'granted' || isCancelled()) return;
       // Registration carries only the pseudonymous identifier and its
       // domain binding. No customer ID (tenant comes from the grant), no
       // user agent, and no other browser telemetry.
       WriteGrant.get().then(function(grant) {
-        if (state.consent !== 'granted') return;
+        if (state.consent !== 'granted' || isCancelled()) return;
         if (!grant) {
           Logger.debug('No write grant - skipping identity registration');
           return;

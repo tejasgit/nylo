@@ -22,13 +22,25 @@ const { createTrackHandler } = require('./track-ingestion');
 const { LIMITS } = require('../shared/event-envelope');
 const { createCorsMiddleware } = require('./demo-cors');
 const { registerTokenVerification } = require('./demo-token-routes');
+const { registerDemoWriteRoutes } = require('./demo-write-routes');
 
 const NYLO_TOKEN_SECRET = (function() {
   if (process.env.NYLO_TOKEN_SECRET) return process.env.NYLO_TOKEN_SECRET;
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('[Nylo] NYLO_TOKEN_SECRET is required in production');
+  }
   const ephemeral = crypto.randomBytes(32).toString('hex');
   console.warn('[SECURITY] NYLO_TOKEN_SECRET not set — generated ephemeral secret for this session.');
   return ephemeral;
 })();
+
+if (process.env.NODE_ENV === 'production') {
+  throw new Error(
+    '[Nylo] examples/demo-server-sqlite.js is development-only because its ' +
+    'event viewer routes are intentionally unauthenticated. Use setupNyloRoutes ' +
+    'with authenticated administrative routes in production.'
+  );
+}
 
 const app = express();
 app.use(express.json({ limit: LIMITS.MAX_BATCH_BYTES }));
@@ -49,6 +61,8 @@ app.get('/nylo.js', (req, res) => {
 });
 
 app.use(express.static(path.join(__dirname)));
+
+registerDemoWriteRoutes(app, { secret: NYLO_TOKEN_SECRET });
 
 app.post('/api/track', createTrackHandler(async (event) => {
   await storage.createInteraction({
@@ -71,20 +85,12 @@ app.post('/api/track', createTrackHandler(async (event) => {
       serverReceivedAt: event.receivedAt
     }
   });
-}));
-
-app.post('/api/tracking/register-waitag', async (req, res) => {
-  const { waiTag, sessionId, domain, customerId } = req.body;
-  if (!waiTag || !sessionId) {
-    return res.status(400).json({ success: false, message: 'Missing required fields' });
-  }
-
-  res.json({ success: true, waiTag, sessionId, message: 'WaiTag registered' });
-});
+}, { grantSecret: NYLO_TOKEN_SECRET }));
 
 // WTX-1 token verification with replay protection (shared, see demo-token-routes.js).
 registerTokenVerification(app, {
   secret: NYLO_TOKEN_SECRET,
+  grantSecret: NYLO_TOKEN_SECRET,
   // Durable, atomic, restart-safe replay store backed by the same SQLite DB.
   replayStore: storage.tokenReplayStore
 });

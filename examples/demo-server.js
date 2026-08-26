@@ -129,6 +129,8 @@ app.use(express.static(path.join(__dirname)));
 
 const interactions = [];
 const waiTags = [];
+const MAX_DEMO_INTERACTIONS = 5000;
+const MAX_DEMO_WAITAGS = 1000;
 
 /**
  * Write-grant issuance. The browser asks for write authorization for the
@@ -185,6 +187,7 @@ app.post('/api/track', createTrackHandler((event) => {
     timestamp: event.receivedAt
   };
   interactions.push(interaction);
+  if (interactions.length > MAX_DEMO_INTERACTIONS) interactions.shift();
 }, { grantSecret: () => NYLO_TOKEN_SECRET }));
 
 app.post('/api/tracking/register-waitag', (req, res) => {
@@ -222,6 +225,7 @@ app.post('/api/tracking/register-waitag', (req, res) => {
   };
 
   waiTags.push(registration);
+  if (waiTags.length > MAX_DEMO_WAITAGS) waiTags.shift();
 
   res.json({
     success: true,

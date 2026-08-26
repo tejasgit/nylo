@@ -154,10 +154,10 @@ export function setupNyloRoutes(app: express.Express, storage: any, options?: Ny
   registerDnsVerificationRoutes(app, storage);
 }
 
-export { registerTrackingRoutes } from './api/tracking';
-export { registerWaiTagTrackingRoutes, TokenReplayStore } from './api/waitag-tracking';
-export { registerGrantRoutes, requireWriteGrant } from './api/grant';
-export { registerDnsVerificationRoutes } from './api/dns-verify';
+// Individual route registrars are intentionally not public API: mounting
+// them directly would omit the centralized CORS, headers, request limits,
+// rate limiting, and production fail-closed checks above.
+export type { TokenReplayStore } from './api/waitag-tracking';
 export { generateWaiTagId, generateSessionId, generateApiKey } from './utils/secure-id';
 export {
   generateVerificationToken,
