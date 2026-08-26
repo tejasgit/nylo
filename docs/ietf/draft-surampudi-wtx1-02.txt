@@ -1,0 +1,2912 @@
+
+
+
+
+Independent Submission                                   R. T. Surampudi
+Internet-Draft                                              Nylo Project
+Intended status: Informational                            26 August 2026
+Expires: 27 February 2027
+
+
+           WTX-1: Cross-Domain Context Preservation Protocol
+                        draft-surampudi-wtx1-02
+
+Abstract
+
+   This document defines WTX-1, a protocol for preserving pseudonymous
+   user context across web domains that are operated by, or on behalf
+   of, the same organization and that have mutually opted into the
+   exchange.  The protocol operates only after explicit user consent and
+   does not use third-party cookies, browser fingerprinting, or
+   collection of direct identifiers by default.  Identifiers are
+   pseudonymous, not anonymous: they can be linked to application-level
+   identities by the deploying organization and may constitute personal
+   data under applicable law.
+
+   WTX-1 transfers context using an encrypted, authenticated,
+   destination-bound, single-use token carried in the URL fragment.
+   Tokens are issued and verified server side, with atomic replay
+   consumption, DNS-based domain authorization, and short-lived server-
+   signed write grants that authorize browser write operations without
+   trusting caller-supplied tenant claims.
+
+   This revision (draft-02) replaces the signed-cleartext token format
+   of draft-01 with a sign-then-encrypt construction, specifies write
+   grants and replay-consumption ordering, defines the consent lifecycle
+   including withdrawal and asynchronous cancellation, adds storage
+   retention limits and user inspection, reset, and revocation controls,
+   and rescopes the document's security, privacy, and performance claims
+   to match the reviewed reference implementation.  A complete change
+   log appears in Appendix A.
+
+Status of This Memo
+
+   This Internet-Draft is submitted in full conformance with the
+   provisions of BCP 78 and BCP 79.
+
+   Internet-Drafts are working documents of the Internet Engineering
+   Task Force (IETF).  Note that other groups may also distribute
+   working documents as Internet-Drafts.  The list of current Internet-
+   Drafts is at https://datatracker.ietf.org/drafts/current/.
+
+
+
+
+
+Surampudi               Expires 27 February 2027                [Page 1]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+   Internet-Drafts are draft documents valid for a maximum of six months
+   and may be updated, replaced, or obsoleted by other documents at any
+   time.  It is inappropriate to use Internet-Drafts as reference
+   material or to cite them other than as "work in progress."
+
+   This Internet-Draft will expire on 27 February 2027.
+
+Copyright Notice
+
+   Copyright (c) 2026 IETF Trust and the persons identified as the
+   document authors.  All rights reserved.
+
+   This document is subject to BCP 78 and the IETF Trust's Legal
+   Provisions Relating to IETF Documents (https://trustee.ietf.org/
+   license-info) in effect on the date of publication of this document.
+   Please review these documents carefully, as they describe your rights
+   and restrictions with respect to this document.
+
+Table of Contents
+
+   1.  Introduction  . . . . . . . . . . . . . . . . . . . . . . . .   4
+     1.1.  Background  . . . . . . . . . . . . . . . . . . . . . . .   4
+     1.2.  Relationship to Existing Link Decoration  . . . . . . . .   5
+     1.3.  Scope . . . . . . . . . . . . . . . . . . . . . . . . . .   5
+     1.4.  What WTX-1 Does Not Provide . . . . . . . . . . . . . . .   6
+     1.5.  Requirements Language . . . . . . . . . . . . . . . . . .   6
+     1.6.  Classification of Requirements  . . . . . . . . . . . . .   6
+     1.7.  Changes from draft-01 . . . . . . . . . . . . . . . . . .   7
+   2.  Terminology . . . . . . . . . . . . . . . . . . . . . . . . .   7
+     2.1.  Data-Handling Terms . . . . . . . . . . . . . . . . . . .   8
+   3.  Protocol Overview . . . . . . . . . . . . . . . . . . . . . .   9
+     3.1.  Actors  . . . . . . . . . . . . . . . . . . . . . . . . .   9
+     3.2.  Trust Model . . . . . . . . . . . . . . . . . . . . . . .   9
+     3.3.  Protocol Flow . . . . . . . . . . . . . . . . . . . . . .  10
+     3.4.  Version Negotiation . . . . . . . . . . . . . . . . . . .  12
+   4.  Pseudonymous Identifier (WaiTag)  . . . . . . . . . . . . . .  12
+     4.1.  Format  . . . . . . . . . . . . . . . . . . . . . . . . .  12
+     4.2.  Generation  . . . . . . . . . . . . . . . . . . . . . . .  12
+     4.3.  Properties  . . . . . . . . . . . . . . . . . . . . . . .  13
+   5.  Cross-Domain Token Format . . . . . . . . . . . . . . . . . .  13
+     5.1.  Envelope  . . . . . . . . . . . . . . . . . . . . . . . .  13
+     5.2.  Key Derivation and Cryptographic Construction . . . . . .  14
+     5.3.  Inner Payload and Canonicalization  . . . . . . . . . . .  15
+     5.4.  Issuance  . . . . . . . . . . . . . . . . . . . . . . . .  16
+   6.  Token Verification and Replay Consumption . . . . . . . . . .  17
+     6.1.  Verification Request  . . . . . . . . . . . . . . . . . .  17
+     6.2.  Verification Algorithm  . . . . . . . . . . . . . . . . .  18
+     6.3.  Atomic Replay Consumption . . . . . . . . . . . . . . . .  19
+
+
+
+Surampudi               Expires 27 February 2027                [Page 2]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+     6.4.  Error Codes . . . . . . . . . . . . . . . . . . . . . . .  20
+   7.  Token Transport . . . . . . . . . . . . . . . . . . . . . . .  22
+     7.1.  Fragment Transport (Default)  . . . . . . . . . . . . . .  22
+     7.2.  Early-Cleanup Script  . . . . . . . . . . . . . . . . . .  22
+     7.3.  Query-Parameter Transport (Optional, Discouraged) . . . .  23
+     7.4.  Transport Security  . . . . . . . . . . . . . . . . . . .  24
+   8.  Authorization . . . . . . . . . . . . . . . . . . . . . . . .  24
+     8.1.  DNS Domain Authorization  . . . . . . . . . . . . . . . .  24
+     8.2.  Tenant Resolution . . . . . . . . . . . . . . . . . . . .  25
+     8.3.  Write Grants  . . . . . . . . . . . . . . . . . . . . . .  25
+   9.  Consent Lifecycle . . . . . . . . . . . . . . . . . . . . . .  26
+     9.1.  States  . . . . . . . . . . . . . . . . . . . . . . . . .  26
+     9.2.  Granting  . . . . . . . . . . . . . . . . . . . . . . . .  27
+     9.3.  Withdrawal  . . . . . . . . . . . . . . . . . . . . . . .  27
+     9.4.  Asynchronous Cancellation . . . . . . . . . . . . . . . .  27
+   10. First-Party Storage . . . . . . . . . . . . . . . . . . . . .  28
+     10.1.  Layers . . . . . . . . . . . . . . . . . . . . . . . . .  28
+     10.2.  Encoding and Tamper Evidence . . . . . . . . . . . . . .  28
+     10.3.  Retention and Expiry . . . . . . . . . . . . . . . . . .  29
+   11. User Transparency and Control . . . . . . . . . . . . . . . .  29
+     11.1.  Boundary with Application Identity and Event
+            Reporting  . . . . . . . . . . . . . . . . . . . . . . .  30
+   12. Complete Protocol Exchange (Informative)  . . . . . . . . . .  30
+     12.1.  Client Error Behavior  . . . . . . . . . . . . . . . . .  32
+   13. Security Considerations . . . . . . . . . . . . . . . . . . .  32
+     13.1.  Assets and Adversaries . . . . . . . . . . . . . . . . .  32
+     13.2.  Token Interception in the User Agent . . . . . . . . . .  33
+     13.3.  Cross-Site Scripting . . . . . . . . . . . . . . . . . .  33
+     13.4.  Replay . . . . . . . . . . . . . . . . . . . . . . . . .  34
+     13.5.  Denial of Service  . . . . . . . . . . . . . . . . . . .  34
+     13.6.  DNS Compromise and Spoofing  . . . . . . . . . . . . . .  35
+     13.7.  Server-Side Key Compromise . . . . . . . . . . . . . . .  35
+     13.8.  Stored-Identity Tampering  . . . . . . . . . . . . . . .  35
+     13.9.  Consent Races  . . . . . . . . . . . . . . . . . . . . .  36
+     13.10. Misbehavior by Authorized Participants . . . . . . . . .  36
+     13.11. Logging Discipline . . . . . . . . . . . . . . . . . . .  36
+   14. Privacy Considerations  . . . . . . . . . . . . . . . . . . .  36
+     14.1.  Pseudonymity, Not Anonymity  . . . . . . . . . . . . . .  37
+     14.2.  Link Decoration, History, and Local Observability  . . .  37
+     14.3.  Correlation Scope and Collusion  . . . . . . . . . . . .  37
+     14.4.  Application-Identity Linkage . . . . . . . . . . . . . .  38
+     14.5.  Data Minimization  . . . . . . . . . . . . . . . . . . .  38
+     14.6.  Interaction with Browser Anti-Tracking . . . . . . . . .  38
+     14.7.  Residual Privacy Risks . . . . . . . . . . . . . . . . .  39
+   15. Verifiable Properties and Measured Observations . . . . . . .  39
+     15.1.  Structural Properties (Verifiable by Construction) . . .  39
+     15.2.  Measured Observations (Reference Implementation) . . . .  40
+   16. Deployment Considerations . . . . . . . . . . . . . . . . . .  40
+
+
+
+Surampudi               Expires 27 February 2027                [Page 3]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+     16.1.  Durable Replay Store . . . . . . . . . . . . . . . . . .  40
+     16.2.  Fail-Closed Configuration  . . . . . . . . . . . . . . .  41
+     16.3.  Key Management . . . . . . . . . . . . . . . . . . . . .  41
+     16.4.  DNS Revalidation . . . . . . . . . . . . . . . . . . . .  41
+     16.5.  Rate Limiting  . . . . . . . . . . . . . . . . . . . . .  41
+     16.6.  Content Security Policy  . . . . . . . . . . . . . . . .  42
+     16.7.  Logging and Monitoring . . . . . . . . . . . . . . . . .  42
+   17. Implementation Status . . . . . . . . . . . . . . . . . . . .  42
+   18. Conformance Checklist (Informative) . . . . . . . . . . . . .  42
+     18.1.  Issuer . . . . . . . . . . . . . . . . . . . . . . . . .  43
+     18.2.  Verifier . . . . . . . . . . . . . . . . . . . . . . . .  43
+     18.3.  Client . . . . . . . . . . . . . . . . . . . . . . . . .  43
+     18.4.  Deployment . . . . . . . . . . . . . . . . . . . . . . .  44
+   19. IANA Considerations . . . . . . . . . . . . . . . . . . . . .  44
+   20. References  . . . . . . . . . . . . . . . . . . . . . . . . .  44
+     20.1.  Normative References . . . . . . . . . . . . . . . . . .  44
+     20.2.  Informative References . . . . . . . . . . . . . . . . .  45
+   Appendix A.  Changes from draft-01  . . . . . . . . . . . . . . .  47
+     A.1.  Token Format and Verification . . . . . . . . . . . . . .  47
+     A.2.  Identifier  . . . . . . . . . . . . . . . . . . . . . . .  47
+     A.3.  Authorization . . . . . . . . . . . . . . . . . . . . . .  48
+     A.4.  Consent, Storage, and User Controls . . . . . . . . . . .  48
+     A.5.  Claims, Positioning, and Analysis . . . . . . . . . . . .  49
+   Appendix B.  Illustrative Token (Non-Normative) . . . . . . . . .  49
+   Appendix C.  Comparison with Related Mechanisms (Informative) . .  50
+   Acknowledgments . . . . . . . . . . . . . . . . . . . . . . . . .  52
+   Author's Address  . . . . . . . . . . . . . . . . . . . . . . . .  52
+
+1.  Introduction
+
+1.1.  Background
+
+   Third-party cookies have been the primary mechanism for cross-domain
+   user identification since the 1990s.  With Safari's Intelligent
+   Tracking Prevention ([ITP]) deployed in 2017, Firefox Enhanced
+   Tracking Protection in 2019, and Chrome's Privacy Sandbox initiative
+   ([PrivacySandbox]), the mechanism is being removed or restricted
+   across major browsers.
+
+   Organizations that legitimately operate multiple registrable domains
+   (for example, a healthcare system with separate provider and patient-
+   portal domains, a bank with separate brand and servicing domains, or
+   a government with separate agency domains) lose the ability to
+   understand that the same visitor moved between their own properties,
+   even when the visitor has consented to that continuity.
+
+
+
+
+
+
+Surampudi               Expires 27 February 2027                [Page 4]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+   WTX-1 addresses this narrow case: consented, pseudonymous context
+   continuity between domains that are commonly operated and mutually
+   authorized.  It is deliberately not a general-purpose cross-site
+   tracking mechanism; the authorization model (Section 8) makes the set
+   of participating domains explicit and auditable.
+
+1.2.  Relationship to Existing Link Decoration
+
+   Carrying identity through navigation URLs ("link decoration") is
+   established practice.  Google Analytics cross-domain measurement
+   appends a _gl parameter to outbound links ([GA-LINKER]), and the
+   Adobe Experience Cloud Identity Service appends an adobe_mc parameter
+   ([ADOBE-MC]).  WTX-1 belongs to this transport family and does not
+   claim to introduce a new capability class.
+
+   What WTX-1 specifies, and what distinguishes it from deployed linker
+   parameters, is the security and privacy contract of the handoff:
+
+   *  token contents are encrypted and authenticated rather than encoded
+      in cleartext or with reversible obfuscation (Section 5);
+
+   *  each token is bound to one issuing tenant and one destination
+      registrable domain, and is accepted at most once (Section 6);
+
+   *  tokens travel in the URL fragment, which user agents do not
+      transmit in HTTP requests (Section 7);
+
+   *  participation requires published DNS authorization records and
+      server-side tenant configuration (Section 8); and
+
+   *  no identifier exists, and no token is issued or accepted, until
+      the user has affirmatively consented, and consent withdrawal
+      deletes stored identity (Section 9).
+
+   This document is therefore best read as a hardening and consent layer
+   for an existing, widely deployed pattern, and as a candidate baseline
+   for evaluating that pattern in privacy research venues such as the
+   IRTF Privacy Enhancements and Assessments Research Group ([PEARG]).
+
+1.3.  Scope
+
+   In scope: the pseudonymous identifier format (Section 4); the token
+   envelope, cryptographic construction, issuance, and verification
+   rules (Section 5 and Section 6); fragment transport and URL cleanup
+   (Section 7); domain authorization, tenant resolution, and write
+   grants (Section 8); the consent lifecycle (Section 9); first-party
+   storage integrity and retention (Section 10); and user transparency
+   and control interfaces (Section 11).
+
+
+
+Surampudi               Expires 27 February 2027                [Page 5]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+   Out of scope: analytics event semantics beyond the boundary described
+   in Section 11.1; identity resolution against application accounts
+   (only its privacy consequences are discussed, in Section 14.4); and
+   any assessment of legal or regulatory compliance, which depends on
+   jurisdiction, purpose, and deployment context and is not a property a
+   protocol document can confer.
+
+1.4.  What WTX-1 Does Not Provide
+
+   *  Anonymity.  WTX-1 identifiers are pseudonymous.  The deploying
+      organization can link them to application-level identities
+      (Section 14.4), and they may be personal data under applicable law
+      (Section 14.1).
+
+   *  Protection against a fully compromised page.  A script with
+      arbitrary execution on a participating page (for example, via
+      cross-site scripting) can observe what that page can observe
+      (Section 13.3).
+
+   *  Guaranteed compatibility with future browser anti-tracking
+      heuristics (Section 14.6).
+
+   *  Legal or regulatory compliance.  This document uses jurisdiction-
+      neutral language throughout and makes no compliance claims.
+
+1.5.  Requirements Language
+
+   The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT",
+   "SHOULD", "SHOULD NOT", "RECOMMENDED", "NOT RECOMMENDED", "MAY", and
+   "OPTIONAL" in this document are to be interpreted as described in
+   BCP 14 [RFC2119] [RFC8174] when, and only when, they appear in all
+   capitals, as shown here.
+
+1.6.  Classification of Requirements
+
+   To keep interoperability requirements distinguishable from advice,
+   this document separates statements into four classes:
+
+   Protocol requirements:  Behavior required for independent
+      implementations to interoperate securely: wire formats,
+      cryptographic constructions, validation and ordering rules, and
+      error codes.  These use MUST / MUST NOT.
+
+   Implementation recommendations:  Behavior that is strongly advised
+      for security or privacy but where alternatives exist.  These use
+      SHOULD / RECOMMENDED, and implementations that deviate are
+      expected to understand the consequences.
+
+
+
+
+Surampudi               Expires 27 February 2027                [Page 6]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+   Optional behavior:  Features an implementation MAY provide (for
+      example, query-parameter transport, Section 7.3).  Absence does
+      not affect conformance.
+
+   Deployment policy:  Operational choices that belong to the deploying
+      organization, such as consent defaults, retention values within
+      protocol bounds, or rate-limit thresholds.  These are identified
+      in the text as deployment policy, are collected in Section 16, and
+      are not protocol conformance items even where recommended values
+      are given.
+
+   Statements about the reference implementation (Section 17) are
+   descriptive, not normative.
+
+1.7.  Changes from draft-01
+
+   Draft-02 is a substantial revision: the token format, authorization
+   model, consent lifecycle, storage retention, and claims language all
+   changed.  Implementers of draft-01 should treat this document as a
+   replacement rather than a delta.  Appendix A lists the changes and
+   their rationale.
+
+2.  Terminology
+
+   Tenant:  The organization on whose behalf identifiers are created and
+      tokens are issued and verified.  A tenant is identified by a
+      tenant identifier (also called a customer identifier) that is
+      resolved from server-side configuration, never from browser-
+      supplied assertions.
+
+   Source domain:  The registrable domain the user is navigating away
+      from; the domain on which the token's context originates.
+
+   Destination domain:  The registrable domain the user is navigating
+      to; the only domain at which a given token is acceptable.
+
+   Registrable domain:  The effective top-level domain plus one label
+      (eTLD+1), determined using the Public Suffix List ([PSL]).  All
+      domain comparisons in this protocol are made on registrable
+      domains after Public Suffix List parsing.
+
+   WaiTag:  The pseudonymous identifier defined in Section 4.  WaiTags
+      contain no direct identifiers, but they are linkable across
+      authorized domains by design and are pseudonymous rather than
+      anonymous.
+
+   Cross-domain token (token):  The encrypted, authenticated,
+
+
+
+
+Surampudi               Expires 27 February 2027                [Page 7]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+      destination-bound, single-use object defined in Section 5 that
+      carries context between domains.
+
+   Token envelope:  The outer, cleartext-visible structure of a token:
+      format version, tenant identifier, destination domain,
+      initialization vector, ciphertext, and authentication tag
+      (Section 5.1).
+
+   Inner payload:  The signed JSON object carried inside the envelope's
+      ciphertext (Section 5.3).
+
+   Issuer:  The server-side component that creates tokens for a tenant.
+      Token issuance is an authenticated server-side operation; browsers
+      never hold issuance credentials.
+
+   Verifier:  The server-side component that validates and atomically
+      consumes tokens (Section 6).
+
+   Write grant:  A short-lived, server-signed authorization that permits
+      a browser to perform specific write operations (event ingestion,
+      identifier registration, token verification) for one domain and
+      one tenant (Section 8.3).
+
+   Consent state:  One of unknown, granted, denied, or withdrawn
+      (Section 9).  Identity creation, storage, token processing, and
+      event transmission occur only in the granted state.
+
+   Replay store:  The server-side record of consumed token identifiers
+      used to enforce single use (Section 6 and Section 16.1).
+
+   Early-cleanup script:  A small synchronous script placed at the top
+      of the destination page's head element that removes the token from
+      the URL before other scripts execute (Section 7.2).
+
+2.1.  Data-Handling Terms
+
+   Reviews of earlier revisions found that the words "encrypted" and
+   "signed" were applied to mechanisms that were neither.  This document
+   uses the following terms precisely, and implementations' user-facing
+   documentation SHOULD preserve these distinctions:
+
+   Encrypted:  Protected for confidentiality and integrity with an
+      authenticated cipher under a key not available to the browser.  In
+      this protocol, only the token's inner payload is encrypted (AES-
+      256-GCM, Section 5.2).
+
+   Signed:  Covered by a message authentication code (HMAC-SHA256)
+
+
+
+
+Surampudi               Expires 27 February 2027                [Page 8]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+      computed with a key not available to the browser: the token's
+      inner payload (Section 5.3) and write grants (Section 8.3).
+
+   Encoded:  Reversibly transformed (for example, Base64url [RFC4648] or
+      salted encoding of stored identity) with no confidentiality or
+      integrity value.  Anyone with the encoded value can decode it.
+
+   Tamper-evident:  Accompanied by an integrity check whose key is
+      present in the browser.  Browser-stored identity records are
+      tamper-evident but not authenticated against an attacker who can
+      run script in the page context (Section 10.2).
+
+   Browser-stored identity data is encoded and tamper-evident; it is not
+   encrypted.  Cross-domain tokens are encrypted and signed.  Consent
+   state is stored as plain values.
+
+3.  Protocol Overview
+
+3.1.  Actors
+
+   *  The user and their user agent (browser).
+
+   *  The source page and destination page, each running a WTX-1 client
+      (typically a JavaScript SDK) in first-party context on their
+      respective domains.
+
+   *  The tenant's verification server, which issues write grants,
+      issues and verifies tokens, and maintains the replay store.  The
+      issuer and verifier roles may be deployed together or separately
+      but share key material scope (Section 5.2).
+
+   *  The DNS, which publishes domain authorization records
+      (Section 8.1).
+
+3.2.  Trust Model
+
+   *  Browsers are never trusted to assert tenant identity.  Every
+      browser write is authorized by a server-signed write grant whose
+      tenant binding comes from server-side domain-to-tenant
+      configuration (Section 8.3).
+
+   *  Token issuance is trusted: it requires server-side credentials (an
+      API key in the reference implementation) and is expected to be
+      fronted by the tenant's own first-party backend rather than
+      exposed to browsers (Section 5.4).
+
+
+
+
+
+
+Surampudi               Expires 27 February 2027                [Page 9]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+   *  The verification server is trusted by the tenant to hold the token
+      secret and enforce single use.  Participating pages trust the
+      verification server's answers.
+
+   *  The DNS answer for authorization records is trusted to the extent
+      DNS is trusted; Section 13.6 analyzes the consequences and
+      mitigations.
+
+   *  Scripts running on a participating page other than the WTX-1
+      client are not trusted, and the protocol limits, but cannot
+      eliminate, their visibility into tokens (Section 13.2).
+
+3.3.  Protocol Flow
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Surampudi               Expires 27 February 2027               [Page 10]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+    Source page (source.example)          Verification server
+    ----------------------------          -------------------
+    1. Consent granted; WaiTag
+       exists in first-party
+       storage.
+    2. POST /api/tracking/grant  ------>  Resolve tenant from
+       { domain }                         domain config; sign
+                                 <------  write grant
+    3. Register WaiTag with
+       grant (X-Nylo-Grant)      ------>  Validate grant; store
+                                          pseudonymous record
+    4. User activates link to
+       destination.example.
+       Client asks its backend
+       for a token; backend
+       calls issuance API        ------>  Issue encrypted,
+       (server credential)                signed, destination-
+                                 <------  bound token
+    5. Navigate to
+       https://destination.example/page#nylo_token=<token>
+
+    Destination page (destination.example)
+    ---------------------------------------
+    6. Early-cleanup script strips the fragment and stashes
+       the token before other scripts run.
+    7. Client requests write grant for destination.example.
+    8. POST /api/tracking/verify-cross-domain-token
+       with token + grant        ------>  Authorize grant;
+                                          validate envelope;
+                                          decrypt; verify
+                                          signature; check
+                                          expiry and binding;
+                                          atomically consume
+                                 <------  { identity } or error
+    9. On success, the client adopts the WaiTag in first-party
+       storage and dispatches a transparency event
+       (nyloContextPreserved). On any error, the destination
+       starts a fresh, unlinked session.
+
+                       Figure 1: WTX-1 protocol flow
+
+   Steps 2-3 and 7 fail closed: a page whose domain has no tenant
+   mapping receives no grant and therefore cannot register identifiers,
+   ingest events, or verify tokens.  Step 8's internal ordering is
+   normative and is specified in Section 6.
+
+
+
+
+
+
+Surampudi               Expires 27 February 2027               [Page 11]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+3.4.  Version Negotiation
+
+   The token envelope carries an integer format version v.  This
+   document defines version 2.  Verifiers MUST reject any token whose
+   envelope version is absent or not equal to 2 with
+   UNSUPPORTED_VERSION, before attempting decryption.  In particular,
+   the signed-cleartext format of draft-01 (version 1 or unversioned)
+   MUST be rejected; there is no downgrade path.  The version is also
+   bound inside the authenticated additional data and the signed inner
+   payload (Section 5.2), so an attacker cannot re-label a token's
+   version without detection.
+
+   Future versions are expected to be introduced by issuing tokens with
+   a new version number and deploying verifiers that accept the new
+   version explicitly.  A verifier MUST NOT apply version-2 processing
+   to a token labeled with another version.
+
+4.  Pseudonymous Identifier (WaiTag)
+
+4.1.  Format
+
+   A WaiTag is a lowercase ASCII string of the form:
+
+   waitag  = "wai_" 19HEXDIG-L "_" 8HEXDIG-L
+   HEXDIG-L = DIGIT / "a" / "b" / "c" / "d" / "e" / "f"
+
+   that is, the literal prefix wai_, 19 lowercase hexadecimal
+   characters, an underscore, and 8 lowercase hexadecimal characters.
+   Consumers MUST validate this shape and reject values that do not
+   match rather than normalizing them.
+
+4.2.  Generation
+
+   The 27 hexadecimal characters are consecutive substrings of a single
+   SHA-256 digest [FIPS-180-4] computed over the concatenation of:
+
+   1.  16 octets (128 bits) from a cryptographically secure random
+       source [RFC4086] (in browsers, crypto.getRandomValues
+       [WebCrypto]);
+
+   2.  the current timestamp; and
+
+   3.  a per-domain salt.
+
+   The timestamp and salt act as diversifiers only; all unpredictability
+   comes from the 128-bit random input.  The identifier exposes 108 bits
+   (27 hexadecimal characters) of the digest.
+
+
+
+
+Surampudi               Expires 27 February 2027               [Page 12]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+   Generation MUST fail closed: if no cryptographically secure random
+   source or digest primitive is available, the client MUST NOT generate
+   an identifier, and cross-domain features remain disabled.  Clients
+   MUST NOT fall back to non-cryptographic randomness such as
+   Math.random().  (Draft-01 permitted such a fallback; draft-02 removes
+   it, matching the reviewed implementation.)
+
+4.3.  Properties
+
+   *  No component of the identifier decodes to a timestamp, domain, or
+      counter; two identifiers generated in the same millisecond on the
+      same domain differ.  (Draft-01's format embedded a base-36
+      timestamp and a domain hash; draft-02's digest construction
+      removes both.)
+
+   *  Identifiers are unlinkable to each other absent the deploying
+      organization's records: a fresh WaiTag shares no derivable
+      relationship with a previous one.
+
+   *  Identifiers are pseudonymous, not anonymous.  Within the
+      authorized domain set, the same WaiTag intentionally links visits;
+      the tenant can further link a WaiTag to an application identity
+      (Section 14.4).  WaiTags may therefore be personal data under
+      applicable law (Section 14.1).
+
+   *  Identifiers are time-limited in storage (Section 10.3) and can be
+      reset or deleted by the user at any time (Section 11).
+
+5.  Cross-Domain Token Format
+
+   A WTX-1 token is a sign-then-encrypt object: the inner payload is
+   signed with HMAC-SHA256 [RFC2104], the signed payload is encrypted
+   with AES-256-GCM [SP800-38D], and the result is wrapped in a
+   cleartext envelope carrying only the routing metadata needed to
+   select decryption keys.  Confidentiality is not optional in version
+   2: a conforming verifier never processes cleartext context fields.
+   (Draft-01 specified a signed but cleartext payload; see Appendix A.)
+
+5.1.  Envelope
+
+   The token string is the Base64 encoding ([RFC4648], Section 4) of a
+   UTF-8 JSON [RFC8259] object with exactly these members:
+
+   v:  Integer token format version.  This document defines version 2.
+
+   tid:  Tenant identifier (string, at most 128 characters).
+
+   dst:  Destination registrable domain, lowercase (string, at most 253
+
+
+
+Surampudi               Expires 27 February 2027               [Page 13]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+      characters).
+
+   iv:  Base64-encoded 12-octet AES-GCM initialization vector.
+
+   ct:  Base64-encoded ciphertext of the signed inner payload (at most
+      8192 octets of ciphertext).
+
+   tag:  Base64-encoded 16-octet AES-GCM authentication tag.
+
+   The complete token string MUST NOT exceed 16384 characters; verifiers
+   MUST enforce this and the per-field limits above before any
+   cryptographic processing, to bound resource consumption
+   (Section 13.5).
+
+   tid and dst are the only cleartext fields.  They carry no user
+   context; they exist so the verifier can derive the correct keys, and
+   both are additionally bound into the AEAD associated data and
+   repeated inside the signed inner payload, so tampering with either is
+   detected twice (Section 5.2).
+
+   When a token is placed in a URL fragment or query component, the
+   parameter value MUST be percent-encoded as required for that
+   component ([RFC3986]); consumers decode the parameter before Base64
+   decoding.
+
+5.2.  Key Derivation and Cryptographic Construction
+
+   All keys are derived from a single server-side token secret using
+   HKDF-SHA256 [RFC5869].  The secret MUST NOT be used directly as an
+   encryption or MAC key, and it is never available to browsers.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Surampudi               Expires 27 February 2027               [Page 14]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+   key(purpose, tenant, destination) =
+     HKDF-SHA256(
+       IKM  = token secret (UTF-8),
+       salt = "nylo-wtx1-v2" (UTF-8),
+       info = purpose || "|" || tenant || "|"
+              || lowercase(destination) (UTF-8),
+       L    = 32 octets)
+
+   encKey = key("enc", tid, dst)   ; AES-256-GCM key
+   macKey = key("mac", tid, dst)   ; HMAC-SHA256 key
+
+   AAD = "WTX1|v2|" || tid || "|" || lowercase(dst) (UTF-8)
+
+   sig = lowercase-hex(HMAC-SHA256(macKey,
+           JSON(canonical inner payload)))
+   plaintext  = JSON(canonical inner payload + {"sig": sig})
+   (ct, tag)  = AES-256-GCM-Encrypt(encKey, iv, plaintext, AAD)
+   token      = base64(JSON(envelope))
+
+   Consequences that verifiers rely on:
+
+   *  Key separation by purpose: the encryption key is never reused as a
+      MAC key.
+
+   *  Key separation by context: a token minted for one (tenant,
+      destination) pair cannot be decrypted or verified under another
+      pair's keys.  Cross-destination grafting fails cryptographically,
+      not merely by claim comparison.
+
+   *  AAD binding: altering tid or dst in the envelope causes AEAD
+      authentication failure even before the inner signature is
+      examined, and the AAD's fixed WTX1|v2| prefix binds the protocol
+      version.
+
+   The issuer MUST generate a fresh random 12-octet IV for every token
+   from a cryptographically secure source; an AES-GCM key/IV pair MUST
+   NOT be reused.  Issuers MUST use a cryptographically secure source
+   for the jti claim (the reference implementation uses 16 random
+   octets, hex-encoded).
+
+5.3.  Inner Payload and Canonicalization
+
+   The inner payload is a JSON object whose members are serialized in
+   exactly this order:
+
+
+
+
+
+
+
+Surampudi               Expires 27 February 2027               [Page 15]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+   {
+     "v": 2,
+     "jti": "<128-bit random, lowercase hex>",
+     "iat": <issue time, integer milliseconds since epoch>,
+     "exp": <expiry time, integer milliseconds since epoch>,
+     "tenantId": "<tenant identifier>",
+     "sourceDomain": "<lowercase source registrable domain>",
+     "destinationDomain": "<lowercase destination domain>",
+     "waiTag": "<WaiTag being transferred>",
+     "sessionId": "<opaque session identifier>",
+     "userId": <application user id string, or null>
+   }
+
+   Canonicalization rule: the signature is computed over the UTF-8 JSON
+   serialization of the object with the ten members above in exactly
+   that order, with no insignificant whitespace, and with userId
+   normalized to JSON null when absent.  A verifier MUST reconstruct
+   this canonical form from the decrypted fields and compare signatures
+   in constant time.  The sig member (lowercase hexadecimal HMAC-SHA256
+   output) is appended to the payload object after signing and is not
+   itself signed.
+
+   All of v, jti, iat, exp, tenantId, sourceDomain, destinationDomain,
+   waiTag, and sessionId are required claims; userId is nullable.
+   Issuers MUST refuse to issue tokens with missing required claims, and
+   verifiers MUST reject payloads with absent, null, or empty required
+   claims (MISSING_CLAIMS).
+
+   Times are integer milliseconds.  The default token lifetime (exp -
+   iat) is 300 seconds and is configurable per deployment; issuers
+   SHOULD NOT exceed it materially, since token lifetime bounds both the
+   replay-store retention window and the exposure window of a leaked
+   token.
+
+5.4.  Issuance
+
+   Token issuance is an authenticated, server-side operation:
+
+   1.  The issuance endpoint MUST require a server credential (the
+       reference implementation uses an API key in the X-API-Key
+       header); requests without a valid credential are rejected with
+       UNAUTHORIZED (HTTP 401).  Browsers never hold issuance
+       credentials; deployments front issuance with their own first-
+       party backend.
+
+   2.  The destinationDomain MUST be supplied at issuance; tokens
+       without a destination binding MUST NOT be issued.
+
+
+
+
+Surampudi               Expires 27 February 2027               [Page 16]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+   3.  The tenant bound into the token MUST come from the authenticated
+       issuance context, not from browser-supplied fields.
+
+   4.  Both sourceDomain and destinationDomain MUST be validated as
+       registrable domains ([PSL]), and both MUST be authorized for the
+       tenant (Section 8.1) at issuance time; issuance for an
+       unauthorized domain is refused with DOMAIN_NOT_VERIFIED.  When
+       domain-authorization state cannot be evaluated, production
+       issuers MUST refuse issuance rather than skip the check.
+
+   5.  If no token secret is configured, the server MUST NOT expose
+       issuance or verification endpoints at all (Section 16.2).
+
+6.  Token Verification and Replay Consumption
+
+6.1.  Verification Request
+
+   The destination client submits the token to the tenant's verification
+   endpoint together with the destination domain and a valid write grant
+   (Section 8.3) in the X-Nylo-Grant header:
+
+   POST /api/tracking/verify-cross-domain-token HTTP/1.1
+   Host: verify.tenant.example
+   Content-Type: application/json
+   X-Nylo-Grant: <signed write grant>
+
+   {
+     "token": "<token string>",
+     "domain": "destination.example"
+   }
+
+   Both body members are REQUIRED; requests missing either, or naming a
+   syntactically invalid domain, are rejected with HTTP 400 before the
+   algorithm runs, without a machine-readable code (Section 6.4).
+
+   The verifier MUST authorize before it consumes: validation of a grant
+   bearing the ingest scope (Section 8.3) -- signature, expiry, scope,
+   and domain binding -- and the domain-authorization checks of
+   Section 6.2 complete before any replay-protection state changes.
+   Without this ordering, any unauthenticated observer of a token could
+   "verify" it once, burning it and denying the legitimate destination
+   its handoff (Section 13.5).
+
+   The tenant used for token binding comes exclusively from the
+   authenticated grant.  A customerId member in the request body is
+   legacy-optional; when present it MUST agree with the grant tenant and
+   the request MUST be rejected on conflict (TENANT_MISMATCH) rather
+   than silently reassigned.
+
+
+
+Surampudi               Expires 27 February 2027               [Page 17]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+6.2.  Verification Algorithm
+
+   After grant authorization, the verifier MUST perform the following
+   checks in order, returning the indicated error code at the first
+   failure and revealing no further detail:
+
+   1.   Token string shape: a nonempty string of at most 16384
+        characters; otherwise MALFORMED_TOKEN.
+
+   2.   Envelope decoding: Base64 decode, UTF-8 JSON parse to an object;
+        otherwise MALFORMED_TOKEN.
+
+   3.   Version gate: v equal to 2; otherwise UNSUPPORTED_VERSION.
+        Legacy cleartext tokens fail here before any further processing.
+
+   4.   Tag presence: tag present and a string; otherwise
+        MISSING_SIGNATURE.
+
+   5.   Envelope completeness and limits: tid, dst, iv, ct nonempty
+        strings within the limits of Section 5.1; decoded IV exactly 12
+        octets, decoded tag exactly 16 octets, decoded ciphertext
+        between 1 and 8192 octets; otherwise MALFORMED_TOKEN.
+
+   6.   Pre-decryption routing checks: the envelope dst equals the
+        expected destination (DOMAIN_MISMATCH) and the envelope tid
+        equals the grant tenant (TENANT_MISMATCH).  These exist to give
+        precise errors cheaply; the cryptographic binding below re-
+        enforces both.
+
+   7.   AEAD decryption: derive the encryption key for (tid, dst),
+        decrypt with the envelope IV, tag, and the AAD of Section 5.2.
+        Any failure (wrong secret, wrong tenant or destination, tampered
+        ciphertext, IV, tag, or AAD) yields INVALID_SIGNATURE.
+
+   8.   Payload parse: UTF-8 JSON object; otherwise MALFORMED_TOKEN.
+
+   9.   Inner signature presence: sig present; otherwise
+        MISSING_SIGNATURE.
+
+   10.  Claim completeness: all required claims present and nonempty;
+        otherwise MISSING_CLAIMS.
+
+   11.  Payload version: v equal to 2; otherwise UNSUPPORTED_VERSION.
+
+   12.  Inner signature verification: recompute the canonical
+        serialization (Section 5.3) and the HMAC-SHA256 under the (tid,
+        dst) MAC key; compare in constant time; otherwise
+        INVALID_SIGNATURE.
+
+
+
+Surampudi               Expires 27 February 2027               [Page 18]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+   13.  Envelope/payload binding: payload.tenantId equals tid and
+        payload.destinationDomain equals dst; otherwise
+        INVALID_SIGNATURE.  A spoofed envelope cannot smuggle a foreign
+        payload.
+
+   14.  Issue-time check: iat is a number no further than 60 seconds in
+        the future (clock-skew allowance); otherwise INVALID_IAT.
+
+   15.  Expiry check: current time not after exp; otherwise
+        TOKEN_EXPIRED.
+
+   16.  Post-decryption binding to the request: the signed
+        destinationDomain equals the requested domain (DOMAIN_MISMATCH)
+        and the signed tenantId equals the grant tenant
+        (TENANT_MISMATCH).
+
+   17.  Domain authorization: both the signed sourceDomain and the
+        signed destinationDomain MUST be currently authorized for the
+        token's tenant (Section 8.1); otherwise DOMAIN_NOT_VERIFIED.
+        When domain-authorization state cannot be evaluated, production
+        verifiers MUST reject rather than skip this step (Section 16.2).
+
+   18.  Atomic replay consumption, only after every check above has
+        passed (Section 6.3); a token that was already consumed yields
+        TOKEN_REPLAYED.
+
+6.3.  Atomic Replay Consumption
+
+   Each token is acceptable at most once.  The consumption operation
+   MUST be an atomic check-and-set on a collision-resistant token
+   identifier (the reference implementation uses the SHA-256 hash of the
+   token string; the jti claim is an equivalent key): of N concurrent
+   verifications of the same token, exactly one succeeds and the rest
+   receive TOKEN_REPLAYED.  Consumed-token records MUST be retained at
+   least until the token's exp has passed (plus the clock-skew
+   allowance); after that, expiry itself rejects the token.
+
+   Replay state MUST NOT change for requests that fail authorization or
+   any verification step; only a fully valid, authorized verification
+   consumes the token.  In production the replay store must be durable
+   and shared across server processes; this is a deployment requirement
+   with fail-closed semantics (Section 16.1).
+
+
+
+
+
+
+
+
+
+Surampudi               Expires 27 February 2027               [Page 19]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+6.4.  Error Codes
+
+   Verifiers MUST report every failure of grant authorization
+   (Section 8.3) and of the verification algorithm (Section 6.2) in a
+   JSON body of the form {"success": false, "error": "<CODE>"} using the
+   codes below.  The error code, not the HTTP status, is the
+   interoperable signal; as a guideline, the reference implementation
+   maps MALFORMED_TOKEN to 400, an absent grant to 401, an unconfigured
+   grant subsystem to 503, and every other coded failure -- including
+   unsupported versions, grant validation, binding, authorization, and
+   replay -- to 403.
+
+   Two response classes intentionally fall outside this coded contract:
+   structural request errors (a missing token or domain member, or a
+   syntactically invalid domain) are rejected with HTTP 400, and
+   internal server errors with HTTP 500; both carry only a human-
+   readable message alongside {"success": false}, with no error member.
+   Clients MUST treat a failure response without an error member exactly
+   like a coded failure: fresh session, no retry of the same token.
+
+     +=======================+=======================================+
+     | Code                  | Meaning                               |
+     +=======================+=======================================+
+     | UNSUPPORTED_VERSION   | Envelope or payload version is not 2  |
+     |                       | (includes all legacy cleartext        |
+     |                       | tokens).                              |
+     +-----------------------+---------------------------------------+
+     | MALFORMED_TOKEN       | Token is not a decodable envelope     |
+     |                       | within size limits, or the decrypted  |
+     |                       | payload is not a JSON object.         |
+     +-----------------------+---------------------------------------+
+     | MISSING_SIGNATURE     | Envelope lacks the AES-GCM            |
+     |                       | authentication tag, or the inner      |
+     |                       | payload lacks its signature.          |
+     +-----------------------+---------------------------------------+
+     | MISSING_CLAIMS        | A required claim is absent, null, or  |
+     |                       | empty.                                |
+     +-----------------------+---------------------------------------+
+     | INVALID_SIGNATURE     | AEAD decryption or inner HMAC         |
+     |                       | verification failed, or envelope and  |
+     |                       | payload routing disagree (covers      |
+     |                       | ciphertext, IV, tag, AAD, and payload |
+     |                       | tampering, and wrong-key attempts).   |
+     +-----------------------+---------------------------------------+
+     | INVALID_IAT           | Token is future-dated beyond the      |
+     |                       | clock-skew allowance.                 |
+     +-----------------------+---------------------------------------+
+     | TOKEN_EXPIRED         | Current time is after exp.            |
+
+
+
+Surampudi               Expires 27 February 2027               [Page 20]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+     +-----------------------+---------------------------------------+
+     | TOKEN_REPLAYED        | Token was already consumed.           |
+     +-----------------------+---------------------------------------+
+     | DOMAIN_MISMATCH       | Token destination does not match the  |
+     |                       | requesting destination.               |
+     +-----------------------+---------------------------------------+
+     | DOMAIN_NOT_VERIFIED   | The signed source or destination      |
+     |                       | domain is not currently authorized    |
+     |                       | for the token's tenant (also returned |
+     |                       | at issuance; Section 8.1).            |
+     +-----------------------+---------------------------------------+
+     | ORIGIN_MISMATCH       | A grant request's Origin header       |
+     |                       | disagrees with the requested domain   |
+     |                       | (grant issuance, Section 8.3).        |
+     +-----------------------+---------------------------------------+
+     | GRANT_REQUIRED        | No write grant accompanied a write    |
+     |                       | request (reported with HTTP 401).     |
+     +-----------------------+---------------------------------------+
+     | GRANT_DOMAIN_MISMATCH | The write grant was issued for a      |
+     |                       | different domain.                     |
+     +-----------------------+---------------------------------------+
+     | TENANT_MISMATCH       | Tenant routing (envelope, payload, or |
+     |                       | legacy body field) disagrees with the |
+     |                       | authenticated grant tenant.           |
+     +-----------------------+---------------------------------------+
+
+                     Table 1: Verification error codes
+
+   Failures of the presented grant itself are reported with GRANT_-
+   prefixed codes: GRANT_REQUIRED when no grant accompanies the request,
+   and GRANT_MALFORMED, GRANT_BAD_SIGNATURE, GRANT_INVALID_CLAIMS,
+   GRANT_NOT_YET_VALID, GRANT_EXPIRED, or GRANT_SCOPE_MISSING from grant
+   validation (Section 8.3); GRANTS_UNAVAILABLE (HTTP 503) signals an
+   unconfigured grant subsystem (Section 16.2).
+
+   On any verification failure the destination client MUST proceed as if
+   no token had been presented: it starts a fresh, unlinked session and
+   MUST NOT retry the same token (Section 12.1).
+
+   A successful response carries the transferred identity, the
+   destination domain, and the verification time:
+
+
+
+
+
+
+
+
+
+
+Surampudi               Expires 27 February 2027               [Page 21]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+   {
+     "success": true,
+     "identity": {
+       "waiTag": "<WaiTag>",
+       "sessionId": "<session identifier>",
+       "userId": null
+     },
+     "domain": "<destination domain>",
+     "verifiedAt": "<ISO 8601 timestamp>"
+   }
+
+7.  Token Transport
+
+7.1.  Fragment Transport (Default)
+
+   Tokens travel in the URL fragment under the parameter name nylo_token
+   (consumers also accept the legacy alias wai_token), serialized in
+   application/x-www-form-urlencoded form:
+
+   https://destination.example/landing#nylo_token=<token>
+
+   Per [RFC3986], Section 3.5, the fragment component is not sent in
+   HTTP requests.  With fragment transport the token therefore does not
+   appear in request lines, Referer headers, server access logs, proxy
+   or CDN logs, or WAF logs of the destination or of third parties; this
+   is a structural property of HTTP, not a runtime measurement
+   (Section 15).  The fragment does remain visible to the user agent
+   itself: address bar, browser history until cleanup, and any script or
+   extension that can read the page's location (Section 13.2).
+
+7.2.  Early-Cleanup Script
+
+   Destination pages SHOULD place a small synchronous script at the top
+   of the head element that, before any other script executes: (1) reads
+   the fragment; (2) if a token parameter is present, moves the token
+   into an implementation-specific in-memory variable; and (3) rewrites
+   the URL without the token via history.replaceState(), so the address
+   bar, history entry, and any URL the user copies exclude the token.
+   The WTX-1 client later consumes the stashed token and deletes the
+   variable.
+
+   The reference early-cleanup script (informative):
+
+
+
+
+
+
+
+
+
+Surampudi               Expires 27 February 2027               [Page 22]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+   <script>
+   (function () {
+     try {
+       var h = window.location.hash;
+       if (h && (h.indexOf("nylo_token=") > -1 ||
+                 h.indexOf("wai_token=") > -1)) {
+         var p = new URLSearchParams(h.slice(1));
+         var t = p.get("nylo_token") || p.get("wai_token");
+         if (t) {
+           window.__nylo_early_token = t;
+           p.delete("nylo_token");
+           p.delete("wai_token");
+           var n = p.toString();
+           history.replaceState(null, "",
+             window.location.pathname + window.location.search +
+             (n ? "#" + n : ""));
+         }
+       }
+     } catch (e) { /* fail open: SDK falls back to hash */ }
+   })();
+   </script>
+
+   Without early cleanup the protocol still functions -- the client
+   removes the token when it initializes -- but the token remains in the
+   URL for the whole interval between navigation and client
+   initialization, which enlarges the exposure analyzed in Section 13.2
+   and Section 14.2.
+
+7.3.  Query-Parameter Transport (Optional, Discouraged)
+
+   Implementations MAY support carrying the token in the query component
+   for environments that destroy fragments (some server-side redirect
+   chains, some app webviews).  Query transport MUST be disabled by
+   default and enabled only by explicit configuration.  When enabled,
+   the token is transmitted to the destination server and appears in the
+   six logging surfaces that fragment transport avoids; deployments
+   enabling it SHOULD scrub token parameters from logs and MUST still
+   enforce single use and expiry, which bound (but do not eliminate) the
+   exposure.
+
+   Single-page applications using hash-based routing may conflict with
+   fragment transport; such sites can run the token extraction before
+   their router initializes or opt into query transport with the caveats
+   above.
+
+
+
+
+
+
+
+Surampudi               Expires 27 February 2027               [Page 23]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+7.4.  Transport Security
+
+   All grant, issuance, verification, registration, and event requests
+   MUST use HTTPS.  The protocol MUST NOT be deployed over cleartext
+   HTTP; without TLS, request-carried material (grants, verification
+   bodies, query-transported tokens) is visible to network
+   intermediaries.  Destination pages SHOULD send Referrer-Policy: no-
+   referrer or an equally strict policy so that post-cleanup URLs do not
+   leak to third-party resources, even though the fragment itself is
+   never included in Referer headers.
+
+8.  Authorization
+
+8.1.  DNS Domain Authorization
+
+   Before a domain can receive cross-domain identities, its operator
+   proves control of the domain by publishing a TXT record:
+
+   _nylo-verify.example.com. IN TXT
+       "nylo-domain-verify=<verification code>"
+
+   The flow is: the tenant requests a verification code, the domain
+   operator publishes the record, and the tenant calls the domain-
+   verification endpoint, which resolves _nylo-verify.<domain> and
+   authorizes the domain when the record matches.  Authorization results
+   are cached server side and SHOULD be re-verified periodically;
+   removing the record revokes authorization at the next revalidation
+   (Section 16.4).
+
+   Domain-verification management endpoints MUST be authenticated with a
+   server credential (API key in the reference implementation); caller-
+   supplied tenant identifiers MUST NOT be accepted as authentication.
+   (Draft-01 permitted management calls identified only by a customerId
+   field; draft-02 removes this.)
+
+   Authorization applies to the registrable domain; subdomains of an
+   authorized registrable domain inherit authorization by default, and
+   implementations MAY offer exclusion configuration.  The security of
+   this mechanism is bounded by the security of DNS itself; see
+   Section 13.6.
+
+
+
+
+
+
+
+
+
+
+
+Surampudi               Expires 27 February 2027               [Page 24]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+8.2.  Tenant Resolution
+
+   Browsers never assert tenant identity.  The tenant associated with
+   any browser-originated request is resolved exclusively from server-
+   side configuration (a domain-to-tenant mapping) via the write-grant
+   mechanism below.  Caller-supplied tenant assertions (customerId body
+   fields, identity headers) MUST NOT be trusted; where accepted for
+   legacy compatibility they MUST be checked for agreement with the
+   authenticated grant and the request rejected on conflict
+   (TENANT_MISMATCH), never silently reassigned.
+
+8.3.  Write Grants
+
+   A write grant is a short-lived, server-signed authorization that
+   permits a browser to perform specific write operations for exactly
+   one domain and one tenant.  All browser write paths (event ingestion,
+   identifier registration, token verification) MUST require a valid
+   grant; requests without one are rejected with GRANT_REQUIRED (HTTP
+   401).
+
+   Grant issuance:
+
+   POST /api/tracking/grant HTTP/1.1
+   Host: verify.tenant.example
+   Origin: https://source.example
+   Content-Type: application/json
+
+   { "domain": "source.example" }
+
+   1.  Requests with a malformed domain are rejected (INVALID_DOMAIN).
+       The server resolves the tenant for the requested domain from
+       server-side configuration; requests for unmapped domains MUST be
+       rejected (UNKNOWN_DOMAIN).
+
+   2.  When a browser Origin header is present, its registrable domain
+       MUST match the requested domain (ORIGIN_MISMATCH otherwise).  In
+       production, the Origin header MUST be required (ORIGIN_REQUIRED).
+
+   3.  The response carries the signed grant, its expiry, and its
+       scopes: {"success": true, "grant": "<payload>.<signature>",
+       "expiresAt": "<timestamp>", "scopes": ["ingest", "register"]}.
+
+   Grants are HMAC-SHA256-signed structures binding {tenantId, domain,
+   scopes, iat, exp, jti}. Two scopes are defined: ingest authorizes
+   event ingestion and token verification (verification is a write
+   operation -- it consumes replay state and delivers identity into the
+   destination's session), and register authorizes identifier
+   registration.  Each write endpoint requires a grant whose scopes
+
+
+
+Surampudi               Expires 27 February 2027               [Page 25]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+   include the one it demands; the reference issuer grants both scopes
+   together.  The RECOMMENDED grant lifetime is 10 minutes; the maximum
+   is 24 hours.
+
+   Every write request carries the grant in the X-Nylo-Grant header.
+   Servers MUST verify the grant signature, expiry, scope, and domain
+   binding, and MUST derive the tenant exclusively from the grant.
+
+   Grants authorize writes only.  They MUST NOT be accepted as
+   authentication for reading, linking, or exporting identity data; read
+   and export interfaces require separate, stronger authentication that
+   this document does not define.
+
+   Note that a write grant is intentionally obtainable by any script
+   running on a mapped domain -- it establishes which tenant and domain
+   a write belongs to; it does not authenticate the page's content or
+   protect against a compromised page (Section 13.3).
+
+9.  Consent Lifecycle
+
+9.1.  States
+
+   The client maintains one of four persistent consent states:
+
+                    +---------+
+           +------- | unknown | -------+
+           |        +---------+        |
+      grant|                           |decline
+           v                           v
+      +---------+   withdraw      +----------+
+      | granted | --------------> | denied / |
+      |         | <-------------- | withdrawn|
+      +---------+   re-grant      +----------+
+
+      unknown:   no decision recorded (initial state)
+      granted:   identity and transfer features active
+      denied:    user declined from unknown
+      withdrawn: user revoked a previous grant
+
+   The initial state MUST be unknown absent a persisted decision.  In
+   every state other than granted, the client MUST NOT generate or store
+   identifiers, MUST NOT create, transmit, or accept cross-domain
+   tokens, MUST NOT queue or send events, and MUST NOT initiate protocol
+   network traffic.  The distinction between denied and withdrawn is
+   informational (it records whether an identity previously existed);
+   their behavior is identical.
+
+
+
+
+
+Surampudi               Expires 27 February 2027               [Page 26]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+   How and when a deployment asks for consent (banner, preference
+   center, account setting) is deployment policy and out of scope; the
+   protocol contributes a fail-closed default and the state machine
+   above.  Deployments in jurisdictions that require prior consent for
+   identifiers can rely on the fact that nothing is generated, stored,
+   or transmitted before an affirmative grant.
+
+9.2.  Granting
+
+   On transition to granted, the client generates a WaiTag
+   (Section 4.2), persists it in first-party storage (Section 10),
+   registers it under a write grant, and begins any configured event
+   reporting (Section 11.1).  The consent decision itself is persisted
+   so subsequent page loads resume without re-prompting.
+
+9.3.  Withdrawal
+
+   On transition out of granted, the client MUST, before returning
+   control:
+
+   1.  delete the identifier and identity records from every storage
+       layer (cookie, localStorage, sessionStorage);
+
+   2.  discard all queued, unsent events;
+
+   3.  cease issuing, accepting, and verifying tokens; and
+
+   4.  generate no further protocol network traffic.
+
+   Withdrawal is a client-side guarantee about the browser; deletion of
+   previously transmitted server-side data is a separate obligation of
+   the deploying organization outside this protocol's scope, supported
+   by the pseudonymous identifier as a deletion key.
+
+9.4.  Asynchronous Cancellation
+
+   Identity startup is asynchronous (key generation, storage writes,
+   grant requests, registration calls), so consent can change while work
+   is in flight.  Implementations MUST ensure that work belonging to a
+   superseded consent decision neither persists nor transmits anything
+   after the decision changes, and neither deletes state belonging to a
+   newer decision:
+
+   *  A withdrawal during startup MUST leave the browser with no stored
+      identity, no queued events, and no protocol network traffic, even
+      if startup steps complete after the withdrawal.
+
+
+
+
+
+Surampudi               Expires 27 February 2027               [Page 27]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+   *  A re-grant after withdrawal MUST mint a fresh identifier with no
+      derivable relationship to the deleted one, and a stale earlier
+      startup MUST NOT overwrite or purge the new identity.
+
+   *  A reset (Section 11) issued while registration awaits a grant MUST
+      prevent the pre-reset identifier from ever being uploaded.
+
+   The reference implementation satisfies this with a monotonically
+   increasing epoch counter: every asynchronous continuation validates,
+   immediately before persisting or transmitting, that the epoch and
+   consent state under which it started are still current.  The
+   mechanism is an implementation choice; the observable requirements
+   above are normative.  Section 13.9 discusses why this matters for
+   privacy.
+
+10.  First-Party Storage
+
+10.1.  Layers
+
+   In the granted state, identity is persisted redundantly in first-
+   party storage: a cookie [RFC6265] (24-hour maximum age, consistent
+   with JavaScript cookie capping under Intelligent Tracking Prevention
+   [ITP]), localStorage (long-lived layer, governed by the retention
+   rules below), and sessionStorage (tab-scoped).  All layers are first-
+   party; the protocol uses no third-party storage.
+
+10.2.  Encoding and Tamper Evidence
+
+   Stored identity records are encoded (a reversible, salted
+   transformation) and carry an HMAC-SHA256 integrity value computed
+   with a key that is present in client-side code.  Terminology matters
+   (Section 2.1): this storage is encoded and tamper-evident, not
+   encrypted, and implementations and their documentation MUST NOT
+   describe it as encrypted.  (Draft-01's storage section used
+   "obfuscation" and "encryption" interchangeably; draft-02 corrects
+   this.)
+
+   On every read, the integrity value MUST be validated; a record that
+   fails validation is rejected and that layer cleared.  If no layer
+   holds a valid record, a fresh identifier is generated.  This defends
+   against casual tampering (developer tools, cookie editors) and cross-
+   site cookie injection.  It is explicitly not a defense against a
+   script running in the page context, which can read the key and forge
+   valid records (Section 13.8).
+
+
+
+
+
+
+
+Surampudi               Expires 27 February 2027               [Page 28]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+10.3.  Retention and Expiry
+
+   Stored identifiers MUST NOT persist indefinitely.  Two windows apply,
+   evaluated on every read of the long-lived layer:
+
+       +==========+==========+=====================================+
+       | Rule     | Default  | Behavior                            |
+       +==========+==========+=====================================+
+       | Absolute | 180 days | Expires regardless of activity      |
+       | lifetime | from     |                                     |
+       |          | creation |                                     |
+       +----------+----------+-------------------------------------+
+       | Unused   | 30 days  | Sliding window; "use" means         |
+       | expiry   | from     | restoration for active tracking.    |
+       |          | last use | Passive inspection via the context- |
+       |          |          | view API does not extend retention. |
+       +----------+----------+-------------------------------------+
+
+                         Table 2: Retention windows
+
+   *  Expired records MUST be deleted from all layers on read and never
+      resurrected; a fresh, unlinked identifier is minted instead.
+
+   *  Records without parseable timestamps (legacy formats) MUST fail
+      closed into expiry.
+
+   *  Both windows are configurable within implementation-defined
+      clamps; invalid values keep the defaults.  Because enforcement
+      happens at read time, shortening a window applies retroactively to
+      already-stored records.  The specific window values are deployment
+      policy; the existence of both bounds is a protocol requirement.
+
+   These bounds limit how long any single pseudonymous identifier can
+   correlate visits (Section 14.1).  Implementations MAY rotate
+   identifiers more aggressively.
+
+11.  User Transparency and Control
+
+   Implementations MUST provide user-facing capabilities equivalent to
+   the following, which the reference implementation exposes as public
+   client APIs:
+
+   Inspection (getStoredContext()):  A passive view of everything stored
+      in the browser for this protocol, including retention/expiry
+      projections.  Inspection MUST NOT count as "use" for the sliding
+      retention window and MUST NOT otherwise extend retention.
+
+   Reset (resetContext()):  Deletes the stored identity and mints a
+
+
+
+Surampudi               Expires 27 February 2027               [Page 29]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+      fresh identifier with no derivable relationship to the old one.  A
+      reset MUST also invalidate in-flight work so the pre-reset
+      identifier is never subsequently persisted or uploaded
+      (Section 9.4).
+
+   Revocation (revokeContext()):  Withdraws consent entirely; equivalent
+      to the withdrawal transition of Section 9.3 (delete everything,
+      abort pending work, cease traffic).
+
+   Continuity transparency:  Whenever context is restored -- from
+      storage or across domains -- the client dispatches a DOM event
+      (nyloContextPreserved) that pages can use to show a user-visible
+      continuity indicator.  Implementations SHOULD surface restoration
+      rather than making it silent.
+
+11.1.  Boundary with Application Identity and Event Reporting
+
+   WTX-1 proper ends at pseudonymous context transfer.  Two adjacent
+   capabilities are deliberately separated from it:
+
+   *  Application identity linkage.  An identify()-style API that
+      associates a WaiTag with an application-level user identifier
+      creates exactly the linkage that pseudonymity otherwise avoids;
+      the userId claim exists so consented deployments can carry that
+      linkage.  The privacy consequences are analyzed in Section 14.4;
+      implementations MUST document the consequence and MUST NOT enable
+      such linkage by default.
+
+   *  Event reporting.  Reporting page views, clicks, or custom events
+      is optional and separable.  Every event category MUST be
+      individually opt-in (default off), gated by the same consent
+      state, and authorized by write grants.  Event payloads are
+      minimized: URLs are reduced to origin plus path (query strings and
+      fragments discarded unless individually allowlisted), and
+      fingerprint-capable attributes (user agent, language, timezone,
+      screen and viewport geometry, pointer coordinates, and similar)
+      are neither collected by the reference client nor accepted by the
+      reference server, which strips them as defense in depth.  Identity
+      generation and matching never use browser or device attributes.
+
+12.  Complete Protocol Exchange (Informative)
+
+   This section walks one full handoff.  All identifiers, keys, and
+   encoded blobs are illustrative placeholders, not a cryptographic test
+   vector; Appendix B shows the corresponding structures in detail.
+
+
+
+
+
+
+Surampudi               Expires 27 February 2027               [Page 30]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+   1.  On source.example, the user has granted consent.  The client
+       holds WaiTag wai_9f86d081884c7d659a2fe_aa32b8b4 and a write grant
+       for source.example.
+
+   2.  The user activates a link to destination.example.  The client
+       asks its first-party backend for a token; the backend calls the
+       issuance API with its server credential:
+
+      POST /api/tracking/generate-cross-domain-token HTTP/1.1
+      Host: verify.tenant.example
+      X-API-Key: <server credential, never in the browser>
+      Content-Type: application/json
+
+      {
+        "waiTag": "wai_9f86d081884c7d659a2fe_aa32b8b4",
+        "sessionId": "sess_c1a2b3",
+        "sourceDomain": "source.example",
+        "destinationDomain": "destination.example"
+      }
+
+       The issuer signs and encrypts the payload under keys derived for
+       (tenant t_1001, destination.example) and returns the token.
+
+   3.  The client decorates the navigation:
+
+      https://destination.example/landing#nylo_token=eyJ2IjoyLC...
+
+   4.  On arrival, the early-cleanup script removes the fragment before
+       other scripts run and stashes the token; the address bar shows
+       https://destination.example/landing.
+
+   5.  The destination client obtains a write grant for
+       destination.example (scopes ingest and register, Section 8.3),
+       then verifies under the ingest scope:
+
+      POST /api/tracking/verify-cross-domain-token HTTP/1.1
+      Host: verify.tenant.example
+      Content-Type: application/json
+      X-Nylo-Grant: eyJ0ZW5hbnRJZCI6InRfMTAwMSIsImRvbWFpbiI6...
+
+      {
+        "token": "eyJ2IjoyLC...",
+        "domain": "destination.example"
+      }
+
+       The verifier authorizes the grant, runs the algorithm of
+       Section 6.2, atomically consumes the token, and answers:
+
+
+
+
+Surampudi               Expires 27 February 2027               [Page 31]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+      {
+        "success": true,
+        "identity": {
+          "waiTag": "wai_9f86d081884c7d659a2fe_aa32b8b4",
+          "sessionId": "sess_c1a2b3",
+          "userId": null
+        },
+        "domain": "destination.example",
+        "verifiedAt": "2026-08-26T12:00:05.000Z"
+      }
+
+   6.  The destination client adopts the WaiTag into first-party storage
+       and dispatches nyloContextPreserved.
+
+   7.  Error case: any later submission of the same token -- from a
+       script that raced and lost, an extension that captured it, or a
+       shared link -- fails:
+
+      { "success": false, "error": "TOKEN_REPLAYED" }
+
+       and the submitting page simply starts a fresh, unlinked session.
+
+12.1.  Client Error Behavior
+
+   On any verification failure or network error, the destination client
+   MUST behave as if no token had been presented: it starts a fresh
+   session, MUST NOT retry the same token, and MUST NOT attempt to
+   extract context from the token itself (the payload is ciphertext).
+   No user-visible error is required; degraded continuity is the
+   designed failure mode.  A token lost to a network failure before
+   consumption simply expires.
+
+13.  Security Considerations
+
+13.1.  Assets and Adversaries
+
+   The assets are: the cross-domain token in transit through the user
+   agent; the WaiTag and its stored records; the server-side token
+   secret and grant-signing key; the replay store; and the domain-
+   authorization state.  The adversaries considered are: third-party
+   scripts on participating pages; browser extensions; an attacker with
+   script execution on a participating page (XSS); network observers
+   (bounded by the HTTPS requirement); parties who can influence DNS
+   answers; unauthenticated internet clients (denial of service); and
+   authorized participants behaving beyond their authorization
+   (collusion, Section 13.10).
+
+
+
+
+
+Surampudi               Expires 27 February 2027               [Page 32]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+   Residual-risk language in this section is scoped: "none identified"
+   means none identified within the stated model and assumptions, not an
+   absolute guarantee.  Draft-01's categorical "Residual risk: None"
+   entries are withdrawn.
+
+13.2.  Token Interception in the User Agent
+
+   The token spends an interval in window.location.hash.  Three observer
+   classes matter:
+
+   *  Third-party page scripts.  The early-cleanup script (Section 7.2)
+      removes the token before subsequent scripts execute; afterward the
+      token exists only in an implementation-specific variable until the
+      client consumes and deletes it.  A script that knows the variable
+      name and runs in that window can read it; single use and short
+      expiry bound the value of doing so, and the payload is ciphertext,
+      so a captured token reveals only routing metadata unless the
+      interceptor also wins the verification race -- in which case the
+      legitimate page's verification fails and the user simply gets an
+      unlinked session.  There is no silent double-restore.
+
+   *  Browser extensions.  A content script with "run_at":
+      "document_start" executes before any page script, including early
+      cleanup, and can read the fragment.  No application-layer
+      mechanism can prevent this; it is inherent to the extension model,
+      and comparable exposure exists for OAuth redirect parameters,
+      tokens in web storage, and cookies.  The mitigations are the same
+      as above (single use, short expiry, ciphertext payload), plus the
+      observation that an extension with that capability already reads
+      all page content.  This residual risk is accepted and disclosed; a
+      browser-mediated transfer API would be required to eliminate it.
+
+   *  URL observers outside the page: browser history before cleanup,
+      copied links, shoulder surfing.  The fragment never reaches
+      servers structurally (Section 7.1); locally it is bounded by early
+      cleanup and by single use -- a copied pre-cleanup URL stops
+      working after the original verification consumes the token, and
+      after expiry in any case.
+
+13.3.  Cross-Site Scripting
+
+   An attacker with script execution on a participating page operates
+   with the page's full authority.  Within this protocol's scope such an
+   attacker can: read the stashed token before consumption or submit it
+   first (winning the race, after which the legitimate flow fails
+   visibly); read stored identity records from any storage layer;
+   extract the client-visible integrity key and forge tamper-evident
+   records (Section 13.8); obtain a write grant for the page's domain
+
+
+
+Surampudi               Expires 27 February 2027               [Page 33]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+   and submit writes as that page (Section 8.3); and observe the WaiTag.
+   The attacker cannot decrypt tokens, forge tokens, mint grants for
+   other domains or tenants, read server-side data, or extend a token's
+   single use.
+
+   No cookie flag or client-side hardening changes this materially:
+   identity records exist in storage layers that page script can read by
+   design (an HttpOnly cookie would protect one of three copies while
+   breaking the no-server-dependency deployment model).  The defense is
+   preventing XSS.  Deployments SHOULD apply standard XSS prevention
+   [OWASP-XSS] and a Content Security Policy (Section 16.6); clients
+   MUST treat token and identity values as data, never inserting them
+   into markup unescaped.
+
+13.4.  Replay
+
+   Single use is enforced by atomic consumption after full authorization
+   (Section 6.3).  The design points worth restating: consumption keyed
+   by a collision-resistant token identifier; consumption strictly last,
+   so failed or unauthorized attempts cannot burn tokens; records
+   retained at least through expiry plus skew; and durability across
+   server processes required in production (Section 16.1) -- an in-
+   memory store behind a load balancer would accept the same token once
+   per process.
+
+13.5.  Denial of Service
+
+   *  Token burning: because verification authorizes before it consumes,
+      an unauthenticated observer who saw a token cannot invalidate it
+      by submitting it; only a caller with a valid grant for the token's
+      destination can consume it.  (Draft-01's verifier consumed before
+      some checks; draft-02 makes the ordering normative.)
+
+   *  Resource exhaustion: size and shape limits (Section 5.1) are
+      enforced before any key derivation or decryption; malformed input
+      is rejected on cheap checks first.
+
+   *  Replay-store exhaustion: consumed-token records expire with token
+      lifetime, bounding table growth; issuance is authenticated, so
+      attackers cannot mint unbounded valid jti values; rate limiting
+      (Section 16.5) bounds the unauthenticated request stream.
+
+   *  Grant issuance flooding: grant requests are cheap to serve and
+      rate-limitable; grants confer only scoped, short-lived write
+      authority for the requesting page's own mapped domain.
+
+
+
+
+
+
+Surampudi               Expires 27 February 2027               [Page 34]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+13.6.  DNS Compromise and Spoofing
+
+   Domain authorization is exactly as trustworthy as the DNS answers it
+   consumes.  An attacker who can spoof answers to the verification
+   server, or who controls a participating zone, can pass authorization
+   for a domain they do not legitimately control, and DNS compromise of
+   a participating domain typically implies broader compromise (traffic
+   redirection, certificate issuance).  Mitigations: resolvers SHOULD
+   validate DNSSEC where the zone is signed; verification servers SHOULD
+   resolve over authenticated channels (DNS over HTTPS or DNS over TLS)
+   to a trusted resolver; authorization results MUST be re-verified
+   periodically rather than cached indefinitely (Section 16.4), so
+   record removal revokes within the revalidation interval.  Residual
+   risk: an attacker with sustained control of DNS answers within the
+   revalidation window; deployment-dependent.
+
+13.7.  Server-Side Key Compromise
+
+   All token keys derive from one token secret (Section 5.2).  HKDF
+   separation confines derived keys to their (purpose, tenant,
+   destination) context -- a leaked derived key for one destination does
+   not expose another's -- but it does not reduce the blast radius of
+   master-secret compromise: an attacker holding the token secret can
+   decrypt and forge tokens for every tenant and destination served by
+   that secret until it rotates.  The grant-signing key is similarly
+   critical: its holder can mint write grants for any mapped domain.
+
+   Accordingly: secrets MUST be stored in server-side secret management
+   (never in client-delivered code or version control); deployments
+   SHOULD rotate the token secret periodically (90 days is the reference
+   recommendation) and SHOULD support overlapping acceptance windows
+   during rotation so in-flight tokens survive; keys MUST NOT appear in
+   logs or error output; hardware-backed key storage is worth using
+   where available.  Compromise recovery is rotation plus invalidation
+   of outstanding tokens (they expire within minutes by design).
+
+13.8.  Stored-Identity Tampering
+
+   The storage integrity mechanism (Section 10.2) is tamper evidence
+   against actors without page-script execution: manual editing via
+   developer tools, generic cookie-editor extensions, and cross-site
+   cookie injection (a sibling domain setting cookies for the
+   registrable domain cannot produce a record that validates).  Against
+   page-context script it provides nothing -- the key is client-visible
+   by construction -- and this document deliberately does not call it
+   authentication.  Verifiers never trust browser-stored records for
+   anything security-relevant; registration and verification are server-
+   authorized (Section 8.3).
+
+
+
+Surampudi               Expires 27 February 2027               [Page 35]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+13.9.  Consent Races
+
+   Without the cancellation requirements of Section 9.4, a withdrawal
+   that arrives while identity startup is in flight can lose the race:
+   the startup completes afterward and re-persists an identifier the
+   user just deleted -- a consent violation that looks like a bug.  The
+   normative requirements (no persistence or transmission from
+   superseded work; no cross-epoch purging; reset invalidates pending
+   uploads) close this class.  Implementers are urged to test the
+   interleavings explicitly; the reference implementation's suite
+   includes gated-crypto and gated-grant race tests.
+
+13.10.  Misbehavior by Authorized Participants
+
+   WTX-1 constrains who can participate (tenant configuration, DNS
+   authorization) and what crosses domains (a consented, pseudonymous,
+   destination-bound token).  It cannot technically prevent authorized
+   participants from misusing what they legitimately receive: domains
+   inside a tenant's authorized set could pool identity beyond what was
+   disclosed to the user, and a tenant could link WaiTags to application
+   identities server side (Section 14.4).  These are policy violations,
+   not protocol breaks.  The protocol's contribution is auditability:
+   the participating set is visible in public DNS records, the client
+   exposes what is stored (Section 11), and write grants never authorize
+   reads, so bulk export requires separate authentication outside this
+   protocol.
+
+13.11.  Logging Discipline
+
+   Servers MUST NOT log token strings, grant strings, or any derived key
+   material; log the token identifier hash if correlation is needed.
+   With fragment transport the token never reaches server logs
+   structurally; deployments enabling query transport MUST scrub the
+   token parameter from access logs (Section 7.3).  Verification
+   failures are safe and useful to log by error code.
+
+14.  Privacy Considerations
+
+   This section follows the questions of [RFC6973] where they apply.  It
+   states what the protocol does and does not protect, without
+   jurisdictional claims; operators are responsible for their own legal
+   assessment.
+
+
+
+
+
+
+
+
+
+Surampudi               Expires 27 February 2027               [Page 36]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+14.1.  Pseudonymity, Not Anonymity
+
+   A WaiTag contains no direct identifiers and is generated from
+   randomness, but it exists precisely to link visits by the same user
+   across authorized domains over time.  It is therefore a pseudonymous
+   identifier, and this document does not describe any part of the
+   system as anonymous.  Because the deploying organization can hold
+   additional information that attributes a WaiTag to a person -- most
+   directly via application-identity linkage (Section 14.4), but also
+   via account data, support records, or server logs -- WaiTags and the
+   records keyed by them may constitute personal data under applicable
+   data protection law, and deployers should assume they do when
+   planning notice, lawful basis, access, and deletion processes.
+   (Draft-01 stated the design "falls outside" personal-data
+   definitions; that claim was wrong and is withdrawn.)
+
+   What bounds the pseudonym's reach: linkage extends only across the
+   tenant's authorized domain set, only after affirmative consent, only
+   while consent stands, and only within the retention windows
+   (Section 10.3); reset and revocation break linkage at the user's
+   initiative (Section 11); and a fresh identifier has no derivable
+   relationship to its predecessor.
+
+14.2.  Link Decoration, History, and Local Observability
+
+   WTX-1 is a link-decoration protocol and inherits that shape's local
+   observability: until cleanup runs, the decorated URL -- including the
+   token -- exists in the address bar, in the history entry for the
+   navigation, in anything that snapshots the URL (sync services,
+   "recently closed" features), and in any link preview the source page
+   shows.  What distinguishes WTX-1's exposure: the token is ciphertext
+   except tenant and destination routing fields, so an observer of the
+   URL learns that a handoff occurred between which properties, but not
+   the identifier or any context; the token stops working after one use
+   or five minutes; and early cleanup removes it from the URL and the
+   history entry promptly on arrival.  The fact that a handoff occurred
+   is itself a (deliberately minimal) disclosure; deployments for which
+   even that is sensitive should not use URL-carried transfer at all.
+
+14.3.  Correlation Scope and Collusion
+
+   By design, consented cross-domain correlation is the feature.  The
+   privacy-relevant boundaries are: the participating set is finite,
+   tenant-configured, and DNS-auditable; correlation requires the token
+   path (no passive matching -- identity generation and matching never
+   use browser or device attributes); and nothing in the protocol
+   supports correlation across tenants.  Collusion beyond the disclosed
+   set -- authorized domains pooling data contrary to what users were
+
+
+
+Surampudi               Expires 27 February 2027               [Page 37]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+   told -- is a policy violation the protocol cannot prevent, only make
+   auditable (Section 13.10).  Users can bound their exposure
+   unilaterally: reset mints an unlinked identifier; withdrawal deletes
+   local state entirely.
+
+14.4.  Application-Identity Linkage
+
+   If a deployment calls an identify()-style API, or issues tokens with
+   a non-null userId, the pseudonymous identifier becomes linked to an
+   application-level identity, and every record keyed by that WaiTag --
+   past and future, on every domain where it is restored -- becomes
+   attributable to that account.  This is the single most consequential
+   privacy action in the system.  It MUST be disabled by default, SHOULD
+   be taken only with notice to the user and a considered basis, and
+   MUST be disclosed in implementation documentation.  The protocol
+   deliberately keeps userId nullable so deployments can run purely
+   pseudonymous.
+
+14.5.  Data Minimization
+
+   The token carries exactly the ten claims of Section 5.3: version,
+   token id, two timestamps, tenant, two domains, WaiTag, session id,
+   and nullable user id.  No behavioral data, page content, interaction
+   history, or device attributes ride the token.  Event reporting, where
+   enabled, is separately minimized (Section 11.1): URLs reduced to
+   origin plus path, fingerprint-capable attributes stripped at both
+   ends, invalid values rejected rather than normalized.  The reference
+   server stores no IP addresses with protocol records; infrastructure
+   access logs are a deployment matter deployers should align with their
+   retention policy.
+
+14.6.  Interaction with Browser Anti-Tracking
+
+   WTX-1 uses no third-party cookies, no third-party storage, no
+   redirect or bounce patterns, and no fingerprinting; its cookie layer
+   respects script-written-cookie capping ([ITP]).  The working
+   hypothesis is that current tracking-prevention heuristics in major
+   browsers do not disrupt it.  This has not been verified with browser
+   vendors, and heuristics evolve -- in particular, link-decoration
+   countermeasures could strip or truncate unknown fragment parameters,
+   which would break handoff (safely: the destination starts an unlinked
+   session).  This document records the interaction as a testable
+   hypothesis, not a guarantee, and the honest position is that a
+   consent-gated protocol should be legible to browser policy rather
+   than engineered around it; [PEARG] review is sought partly for this
+   question.
+
+
+
+
+
+Surampudi               Expires 27 February 2027               [Page 38]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+14.7.  Residual Privacy Risks
+
+   *  Extensions and page-compromising scripts can observe tokens pre-
+      consumption and stored identity post-restore (Section 13.2,
+      Section 13.3).
+
+   *  Authorized participants can misuse legitimately received data;
+      linkage via userId is possible by deployment choice
+      (Section 14.4).
+
+   *  The occurrence of a handoff between two named properties is
+      observable locally in pre-cleanup URLs (Section 14.2).
+
+   *  First-party persistence, while bounded and revocable, still means
+      a stable identifier exists for up to the retention window on each
+      participating domain.
+
+   *  Server-side records keyed by WaiTags are outside the browser's
+      deletion reach; withdrawal deletes the browser state and leaves
+      server-side deletion to the deployer's data governance.
+
+15.  Verifiable Properties and Measured Observations
+
+   Earlier revisions presented performance figures as protocol claims.
+   This revision separates three kinds of statement:
+
+15.1.  Structural Properties (Verifiable by Construction)
+
+   *  With fragment transport, zero token octets appear in any HTTP
+      request, and hence in none of the six standard logging surfaces
+      (request line, Referer to the destination, Referer to third
+      parties, proxy/CDN logs, WAF logs, pre-TLS packet capture of
+      requests).  This follows from [RFC3986], Section 3.5, and is
+      verifiable by packet capture: request a page as
+      /landing#nylo_token=CANARY and confirm the canary is absent from
+      all captured requests and logs, then repeat with query transport
+      and confirm presence.
+
+   *  Design constants: 128 bits of CSPRNG input per identifier, 108
+      bits exposed (Section 4.2); expected collision probability about
+      N^2 / 2^109 for N identifiers (about 1.5e-15 at N = 10^9);
+      12-octet IV and 16-octet tag; default 300-second lifetime;
+      60-second skew allowance; single use.
+
+
+
+
+
+
+
+
+Surampudi               Expires 27 February 2027               [Page 39]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+   *  Rejection behavior: legacy cleartext tokens, tag-stripped
+      envelopes, and bit-flipped ciphertexts are rejected with the
+      specific codes of Section 6.4.  The reference test suite exercises
+      each case, including the concurrent-verification single-winner
+      property.
+
+15.2.  Measured Observations (Reference Implementation)
+
+   The following were observed on the reference implementation and are
+   reported as scoped measurements with methodology, not as guarantees;
+   independent reproduction is invited via the client's timing API
+   (getTimingMetrics()), which timestamps each token lifecycle phase
+   with performance.now():
+
+   *  Token visibility window with early cleanup deployed: under 1
+      millisecond from script start to URL rewrite in the reference
+      pages measured; without early cleanup, the window is the full
+      interval from navigation to client initialization (hundreds of
+      milliseconds on typical pages, indefinite if the client never
+      loads).
+
+   *  End-to-end verification time is dominated by one network round
+      trip to the verification endpoint; server-side verification work
+      (decode, derive, decrypt, verify, consume) is small by comparison.
+      Absolute figures depend on deployment and network and are not
+      specified here.
+
+   Hypotheses a deployment should test rather than assume: that its
+   pages load the cleanup script first in practice; that its replay
+   store sustains its verification rate; and that current browser
+   heuristics leave its fragments intact (Section 14.6).
+
+16.  Deployment Considerations
+
+   Items here are operational requirements and policy for running WTX-1
+   in production; they complement, and where marked extend, the protocol
+   requirements.
+
+16.1.  Durable Replay Store
+
+   In production, the replay store MUST be durable and shared across all
+   server processes (a database or distributed cache); a production
+   deployment configured without one MUST refuse to start rather than
+   fall back to per-process memory.  In-memory stores are for
+   development only: they forget consumed tokens on restart and are per-
+   process behind load balancers, both of which re-open replay.
+
+
+
+
+
+Surampudi               Expires 27 February 2027               [Page 40]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+16.2.  Fail-Closed Configuration
+
+   *  If the token secret is not configured, the server MUST NOT
+      register issuance or verification endpoints and MUST log a clear
+      startup error; it MUST NOT accept unsigned or cleartext tokens
+      under any fallback.
+
+   *  Development and demo modes MAY generate an ephemeral secret at
+      startup but MUST log prominently that tokens will not survive
+      restarts.
+
+   *  Grant issuance in production MUST require the browser Origin
+      header (Section 8.3).
+
+   *  Unknown domains, unmapped tenants, malformed identifiers, and out-
+      of-window timestamps are rejected, not normalized.
+
+16.3.  Key Management
+
+   Store the token secret and grant-signing key in a secrets manager;
+   rotate the token secret on a schedule (the reference recommendation
+   is 90 days) with an overlap window during which tokens issued under
+   the outgoing secret are still verifiable; monitor for verification-
+   failure spikes during rotation; never emit key material to logs
+   (Section 13.7).
+
+16.4.  DNS Revalidation
+
+   Re-verify domain authorization on a schedule appropriate to the
+   deployment's risk tolerance (hours to days, not months); treat
+   revalidation failure as revocation; prefer DNSSEC-validating or
+   authenticated (DoH/DoT) resolution for authorization lookups
+   (Section 13.6).
+
+16.5.  Rate Limiting
+
+   Rate-limit grant issuance, verification, registration, and ingestion
+   endpoints.  The reference guideline is on the order of 100
+   verification requests per client address per minute with backoff on
+   failures; the specific numbers are deployment policy and should be
+   set from observed legitimate traffic (Section 13.5).
+
+
+
+
+
+
+
+
+
+
+Surampudi               Expires 27 February 2027               [Page 41]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+16.6.  Content Security Policy
+
+   Deploy CSP on participating pages as an XSS mitigation
+   (Section 13.3).  The early-cleanup script is inline by necessity (it
+   must run before external scripts load), so allow it via a nonce or a
+   script hash rather than a blanket 'unsafe-inline' where the
+   deployment can manage nonces; include the verification origin in
+   connect-src; consider frame-ancestors 'none' where framing is not
+   needed.
+
+16.7.  Logging and Monitoring
+
+   Apply the logging rules of Section 13.11; align infrastructure
+   access-log retention with the protocol's data-minimization posture
+   (Section 14.5); monitor replay rejections (TOKEN_REPLAYED), grant
+   failures (GRANT_REQUIRED, ORIGIN_MISMATCH, UNKNOWN_DOMAIN), and
+   authorization failures as abuse signals; alert on issuance-endpoint
+   authentication failures.
+
+17.  Implementation Status
+
+   This section records the status of known implementations at the time
+   of posting, per the spirit of [RFC7942], and is to be removed before
+   any publication as an RFC.
+
+   One implementation is known: Nylo (https://github.com/tejasgit/nylo),
+   the reference implementation by this document's author, comprising a
+   browser client and a Node.js verification server.  Maturity: pre-
+   alpha; not production-deployed.  Licensing: dual (open-source core,
+   commercial terms for cross-domain components); see the repository.
+   Coverage: the implementation and its automated test suite exercise
+   the v2 token construction and every verification error path of
+   Section 6.2, concurrent single-winner replay consumption, write-grant
+   authorization including tenant-conflict rejection, the consent state
+   machine including the asynchronous-cancellation races of Section 9.4,
+   storage integrity and retention enforcement, registrable-domain
+   parsing, and the user-control APIs of Section 11.
+
+   There is no second, independent implementation yet, and therefore no
+   interoperability report; the wire contract in this revision
+   (canonical serialization, key derivation, error ordering) was
+   specified to make an independent implementation and such a report
+   possible.
+
+18.  Conformance Checklist (Informative)
+
+   A condensed review aid; section references are normative where they
+   conflict.
+
+
+
+Surampudi               Expires 27 February 2027               [Page 42]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+18.1.  Issuer
+
+   *  Authenticates issuance requests; browsers never hold issuance
+      credentials (Section 5.4).
+
+   *  Requires destination domain; binds tenant from authenticated
+      context (Section 5.4).
+
+   *  Derives per-(purpose, tenant, destination) keys via HKDF-SHA256
+      with the salt and info layout of Section 5.2; never uses the raw
+      secret.
+
+   *  Signs the canonical payload, then encrypts with AES-256-GCM under
+      a fresh 12-octet random IV with the AAD of Section 5.2.
+
+   *  Issues 300-second (default) lifetimes; random 128-bit jti
+      (Section 5.3).
+
+18.2.  Verifier
+
+   *  Requires a valid write grant bearing the ingest scope before any
+      token processing; derives tenant only from the grant
+      (Section 6.1).
+
+   *  Runs the ordered algorithm of Section 6.2 with its error codes;
+      enforces size limits before cryptography.
+
+   *  Confirms both signed domains are currently authorized for the
+      token's tenant (DOMAIN_NOT_VERIFIED) before consumption; rejects
+      when authorization state cannot be evaluated in production
+      (Section 6.2).
+
+   *  Reports every coded failure as {"success": false, "error":
+      "<CODE>"}; message-only responses are limited to structural HTTP
+      400 rejections and internal HTTP 500 errors (Section 6.4).
+
+   *  Rejects non-version-2 tokens outright; no downgrade (Section 3.4).
+
+   *  Consumes atomically, last, and only on full success (Section 6.3).
+
+   *  Uses a durable shared replay store in production; refuses to start
+      without one (Section 16.1).
+
+   *  Fails closed when unconfigured (Section 16.2).
+
+18.3.  Client
+
+
+
+
+
+Surampudi               Expires 27 February 2027               [Page 43]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+   *  Generates identifiers only in the granted state, fail-closed
+      CSPRNG-and-digest only (Section 4.2, Section 9.1).
+
+   *  Performs no storage, token, event, or network activity outside
+      granted (Section 9.1).
+
+   *  On withdrawal: deletes all layers, discards queued events, stops
+      traffic, and cancels in-flight work per Section 9.4.
+
+   *  Uses fragment transport by default; deploys early cleanup; treats
+      verification failure as fresh-session, no-retry (Section 7,
+      Section 12.1).
+
+   *  Validates stored-record integrity on read; enforces retention
+      windows on read (Section 10).
+
+   *  Provides inspection, reset, and revocation controls and a restore-
+      transparency signal (Section 11).
+
+   *  Keeps application-identity linkage off by default (Section 14.4).
+
+18.4.  Deployment
+
+   *  HTTPS everywhere; strict referrer policy on destination pages
+      (Section 7.4).
+
+   *  DNS authorization published and revalidated; authenticated
+      management endpoints (Section 8.1, Section 16.4).
+
+   *  Key custody and rotation per Section 16.3; rate limits per
+      Section 16.5; CSP per Section 16.6; logging per Section 13.11.
+
+19.  IANA Considerations
+
+   This document has no IANA actions.  The error codes of Section 6.4
+   and the grant scopes of Section 8.3 are defined only within this
+   protocol; no registry is requested at this maturity.
+
+20.  References
+
+20.1.  Normative References
+
+   [RFC2104]  Krawczyk, H., Bellare, M., and R. Canetti, "HMAC: Keyed-
+              Hashing for Message Authentication", RFC 2104,
+              DOI 10.17487/RFC2104, February 1997,
+              <https://www.rfc-editor.org/info/rfc2104>.
+
+
+
+
+
+Surampudi               Expires 27 February 2027               [Page 44]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+   [RFC2119]  Bradner, S., "Key words for use in RFCs to Indicate
+              Requirement Levels", BCP 14, RFC 2119,
+              DOI 10.17487/RFC2119, March 1997,
+              <https://www.rfc-editor.org/info/rfc2119>.
+
+   [RFC3986]  Berners-Lee, T., Fielding, R., and L. Masinter, "Uniform
+              Resource Identifier (URI): Generic Syntax", STD 66,
+              RFC 3986, DOI 10.17487/RFC3986, January 2005,
+              <https://www.rfc-editor.org/info/rfc3986>.
+
+   [RFC4086]  Eastlake 3rd, D., Schiller, J., and S. Crocker,
+              "Randomness Requirements for Security", BCP 106, RFC 4086,
+              DOI 10.17487/RFC4086, June 2005,
+              <https://www.rfc-editor.org/info/rfc4086>.
+
+   [RFC4648]  Josefsson, S., "The Base16, Base32, and Base64 Data
+              Encodings", RFC 4648, DOI 10.17487/RFC4648, October 2006,
+              <https://www.rfc-editor.org/info/rfc4648>.
+
+   [RFC5869]  Krawczyk, H. and P. Eronen, "HMAC-based Extract-and-Expand
+              Key Derivation Function (HKDF)", RFC 5869,
+              DOI 10.17487/RFC5869, May 2010,
+              <https://www.rfc-editor.org/info/rfc5869>.
+
+   [RFC8174]  Leiba, B., "Ambiguity of Uppercase vs Lowercase in RFC
+              2119 Key Words", BCP 14, RFC 8174, DOI 10.17487/RFC8174,
+              May 2017, <https://www.rfc-editor.org/info/rfc8174>.
+
+   [RFC8259]  Bray, T., Ed., "The JavaScript Object Notation (JSON) Data
+              Interchange Format", STD 90, RFC 8259,
+              DOI 10.17487/RFC8259, December 2017,
+              <https://www.rfc-editor.org/info/rfc8259>.
+
+   [FIPS-180-4]
+              National Institute of Standards and Technology, "Secure
+              Hash Standard (SHS)", FIPS 180-4, August 2015,
+              <https://doi.org/10.6028/NIST.FIPS.180-4>.
+
+   [SP800-38D]
+              National Institute of Standards and Technology,
+              "Recommendation for Block Cipher Modes of Operation:
+              Galois/Counter Mode (GCM) and GMAC", NIST SP 800-38D,
+              November 2007, <https://doi.org/10.6028/NIST.SP.800-38D>.
+
+   [PSL]      Mozilla Foundation, "Public Suffix List",
+              <https://publicsuffix.org/>.
+
+20.2.  Informative References
+
+
+
+Surampudi               Expires 27 February 2027               [Page 45]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+   [RFC6265]  Barth, A., "HTTP State Management Mechanism", RFC 6265,
+              DOI 10.17487/RFC6265, April 2011,
+              <https://www.rfc-editor.org/info/rfc6265>.
+
+   [RFC6973]  Cooper, A., Tschofenig, H., Aboba, B., Peterson, J.,
+              Morris, J., Hansen, M., and R. Smith, "Privacy
+              Considerations for Internet Protocols", RFC 6973,
+              DOI 10.17487/RFC6973, July 2013,
+              <https://www.rfc-editor.org/info/rfc6973>.
+
+   [RFC7942]  Sheffer, Y. and A. Farrel, "Improving Awareness of Running
+              Code: The Implementation Status Section", BCP 205,
+              RFC 7942, DOI 10.17487/RFC7942, July 2016,
+              <https://www.rfc-editor.org/info/rfc7942>.
+
+   [WebCrypto]
+              W3C, "Web Cryptography API", January 2017,
+              <https://www.w3.org/TR/WebCryptoAPI/>.
+
+   [ITP]      Apple WebKit, "Intelligent Tracking Prevention", June
+              2017, <https://webkit.org/blog/7675/intelligent-tracking-
+              prevention/>.
+
+   [PrivacySandbox]
+              Google, "The Privacy Sandbox",
+              <https://privacysandbox.com/>.
+
+   [GA-LINKER]
+              Google, "Set up cross-domain measurement (Google Analytics
+              4)",
+              <https://support.google.com/analytics/answer/10071811>.
+
+   [ADOBE-MC] Adobe, "appendVisitorIDsTo (Cross-Domain Tracking),
+              Experience Cloud Identity Service",
+              <https://experienceleague.adobe.com/en/docs/id-
+              service/using/id-service-api/methods/appendvisitorid>.
+
+   [OWASP-XSS]
+              OWASP, "Cross Site Scripting Prevention Cheat Sheet",
+              <https://cheatsheetseries.owasp.org/cheatsheets/
+              Cross_Site_Scripting_Prevention_Cheat_Sheet.html>.
+
+   [PEARG]    IRTF, "Privacy Enhancements and Assessments Research
+              Group", <https://datatracker.ietf.org/rg/pearg/about/>.
+
+   [RWS]      Google, "Related Website Sets",
+              <https://developers.google.com/privacy-sandbox/cookies/
+              related-website-sets>.
+
+
+
+Surampudi               Expires 27 February 2027               [Page 46]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+Appendix A.  Changes from draft-01
+
+   This revision aligns the specification with the reviewed reference
+   implementation and with an adversarial security and privacy review of
+   draft-01.  Grouped by theme:
+
+A.1.  Token Format and Verification
+
+   *  Replaced the signed-cleartext token (Base64 JSON payload plus
+      HMAC) with the version-2 sign-then-encrypt construction: HMAC-
+      SHA256-signed canonical payload sealed with AES-256-GCM under
+      HKDF-derived per-(tenant, destination) keys, with routing metadata
+      bound as AEAD associated data (Section 5).  Draft-01 tokens
+      carried the WaiTag, domains, and timestamps readable by anyone who
+      saw the URL; version-2 envelopes expose only tenant and
+      destination routing fields.
+
+   *  Made the envelope version a pre-decryption gate; legacy (v1/
+      unversioned) tokens are rejected with UNSUPPORTED_VERSION; removed
+      all acceptance of unsigned tokens and any fallback behavior
+      (Section 3.4).
+
+   *  Specified the exact canonical payload serialization, claim set
+      (adding jti, tenantId, sourceDomain as first-class signed claims),
+      constant-time comparison, clock-skew allowance, and size limits
+      (Section 5.3).
+
+   *  Published the complete ordered verification algorithm with per-
+      step error codes; the error vocabulary grew from 5 codes in
+      draft-01 to 14 (Section 6.4).
+
+   *  Made replay consumption explicitly atomic (single-winner under
+      concurrency) and moved it after all authorization and validity
+      checks, eliminating the token-burning denial of service present in
+      draft-01's ordering (Section 6.3, Section 13.5).
+
+A.2.  Identifier
+
+   *  WaiTag generation changed from draft-01's base-36 random-plus-
+      timestamp with embedded domain hash to substrings of a SHA-256
+      digest over 128 bits of CSPRNG input, a timestamp, and a domain
+      salt; no component of the identifier now decodes to a timestamp or
+      domain (Section 4.2).
+
+   *  Removed draft-01's permitted Math.random() fallback; generation
+      now fails closed when cryptographic primitives are unavailable.
+
+
+
+
+
+Surampudi               Expires 27 February 2027               [Page 47]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+A.3.  Authorization
+
+   *  Added write grants (Section 8.3): all browser write paths --
+      ingestion, registration, and verification -- now require a short-
+      lived server-signed grant; tenant identity is resolved from
+      server-side domain-to-tenant configuration.  Draft-01 identified
+      tenants by a caller-supplied customerId body field, which allowed
+      cross-tenant data poisoning.
+
+   *  Verification now requires a grant bearing the ingest scope for the
+      destination domain and re-checks that both signed domains remain
+      authorized (DOMAIN_NOT_VERIFIED); the customerId body field is
+      legacy-optional and checked for agreement rather than trusted
+      (Section 6.1).
+
+   *  Documented the exact response contract, including the message-only
+      HTTP 400/500 responses that carry no error member (Section 6.4).
+
+   *  Issuance requires server credentials and a mandatory destination
+      binding (Section 5.4); domain-verification management endpoints
+      require API-key authentication (Section 8.1).
+
+A.4.  Consent, Storage, and User Controls
+
+   *  Specified the four-state consent lifecycle with withdrawn distinct
+      from denied, a fail-closed initial state, and full purge-on-
+      withdrawal semantics (Section 9).  Removed draft-01's "anonymous
+      mode": the current protocol performs no event activity of any kind
+      outside the granted state, rather than tracking with per-session
+      random identifiers.
+
+   *  Added the asynchronous-cancellation requirements for consent races
+      (Section 9.4).
+
+   *  Added retention: 180-day absolute and 30-day unused windows
+      enforced at read time, fail-closed for legacy records
+      (Section 10.3); draft-01 storage had no expiry.
+
+   *  Added user inspection, reset, and revocation controls and the
+      restore-transparency event (Section 11).
+
+   *  Renamed storage "encryption"/"obfuscation" honestly: stored
+      identity is encoded with client-side tamper evidence, not
+      encrypted (Section 2.1, Section 10.2).
+
+   *  Added registrable-domain (Public Suffix List) parsing for all
+      domain comparisons, and reject-rather-than-normalize input
+      handling.
+
+
+
+Surampudi               Expires 27 February 2027               [Page 48]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+A.5.  Claims, Positioning, and Analysis
+
+   *  Repositioned the protocol relative to prior art: WTX-1 is a
+      hardened member of the existing link-decoration family (Google
+      Analytics _gl, Adobe adobe_mc), not a new capability class
+      (Section 1.2).
+
+   *  Withdrew draft-01's claim that identifiers are "designed to fall
+      outside" personal-data definitions; this revision states the
+      opposite presumption and discloses identify()-style linkage
+      (Section 14.1, Section 14.4).
+
+   *  Removed regulatory compliance lists (GDPR, CCPA, HIPAA, and
+      similar) in favor of jurisdiction-neutral language throughout.
+
+   *  Replaced categorical security claims ("residual risk: none",
+      "never visible") with scoped analysis, including honest treatment
+      of extensions, XSS, DNS and key compromise, collusion, and consent
+      races (Section 13).
+
+   *  Reframed quantitative claims: structural properties remain
+      verifiable claims; timing figures are now scoped measured
+      observations with methodology, not protocol guarantees
+      (Section 15).  Terminology consistently says "pseudonymous" rather
+      than "anonymous".
+
+   *  Added the complete exchange example (Section 12), illustrative
+      token appendix (Appendix B), conformance checklist (Section 18),
+      deployment considerations (Section 16), and implementation status
+      (Section 17).
+
+Appendix B.  Illustrative Token (Non-Normative)
+
+   The values below show the structures at each stage.  They are
+   placeholders for readability -- the hexadecimal and Base64 strings
+   are not outputs of real keys, and this appendix is not a
+   cryptographic test vector.  A verifiable vector can be produced with
+   the reference implementation by fixing the token secret, jti, IV, and
+   timestamps.
+
+   Inner payload before signing (canonical member order):
+
+
+
+
+
+
+
+
+
+
+Surampudi               Expires 27 February 2027               [Page 49]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+   {
+     "v": 2,
+     "jti": "8c9f1e2ab34cd56e78f90a1b2c3d4e5f",
+     "iat": 1787740800000,
+     "exp": 1787741100000,
+     "tenantId": "t_1001",
+     "sourceDomain": "source.example",
+     "destinationDomain": "destination.example",
+     "waiTag": "wai_9f86d081884c7d659a2fe_aa32b8b4",
+     "sessionId": "sess_c1a2b3",
+     "userId": null
+   }
+
+   Signature input is exactly the JSON serialization above (no
+   whitespace); the resulting sig (64 lowercase hex characters) is
+   appended as an eleventh member, and the plaintext is encrypted with:
+
+   encKey = HKDF-SHA256(secret, "nylo-wtx1-v2",
+                        "enc|t_1001|destination.example", 32)
+   macKey = HKDF-SHA256(secret, "nylo-wtx1-v2",
+                        "mac|t_1001|destination.example", 32)
+   AAD    = "WTX1|v2|t_1001|destination.example"
+
+   Envelope before Base64 wrapping:
+
+   {
+     "v": 2,
+     "tid": "t_1001",
+     "dst": "destination.example",
+     "iv": "u4hnhe0N3RB1lZnw",
+     "ct": "H1n1...opaque Base64 ciphertext...X8Q=",
+     "tag": "0T2Yebw2WQFA0mLxu+f0AA=="
+   }
+
+   The token string is the Base64 encoding of that JSON object and rides
+   the fragment as #nylo_token=<token>.  Note which fields an observer
+   of the URL can read: v, tid, and dst only; the WaiTag, session,
+   domains-as-signed, timestamps, and user id are ciphertext.
+
+Appendix C.  Comparison with Related Mechanisms (Informative)
+
+   The honest comparison baseline is the link-decoration family WTX-1
+   belongs to, plus the browser-native alternatives.
+
+
+
+
+
+
+
+
+Surampudi               Expires 27 February 2027               [Page 50]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+    +=================+========+=========+============+===============+
+    | Property        |3rd-    |GA _gl / | Related    | WTX-1         |
+    |                 |party   |adobe_mc | Website    |               |
+    |                 |cookies |         | Sets       |               |
+    +=================+========+=========+============+===============+
+    | Cross-domain    |Cookie  |URL query| Browser-   | URL fragment  |
+    | carrier         |header  |parameter| mediated   | (not sent in  |
+    |                 |        |         | storage    | requests)     |
+    |                 |        |         | access     |               |
+    +-----------------+--------+---------+------------+---------------+
+    | Payload         |n/a     |Encoded, | n/a        | Encrypted;    |
+    | confidentiality |        |readable |            | routing       |
+    | in transit URL  |        |         |            | metadata only |
+    +-----------------+--------+---------+------------+---------------+
+    | Destination     |No      |No (time-| Browser-   | Cryptographic |
+    | binding /       |        |window   | enforced   | binding;      |
+    | single use      |        |checks   | set        | atomic single |
+    |                 |        |only)    | membership | use           |
+    +-----------------+--------+---------+------------+---------------+
+    | Consent-gated   |No      |No       | No (set-   | Yes; fail-    |
+    | by design       |(policy |(policy  | level, not | closed        |
+    |                 |overlay)|overlay) | user-      | default off   |
+    |                 |        |         | level)     |               |
+    +-----------------+--------+---------+------------+---------------+
+    | Participant set |No      |No       | Yes        | Yes (DNS      |
+    | auditable       |        |         | (published | records +     |
+    |                 |        |         | sets)      | server        |
+    |                 |        |         |            | config)       |
+    +-----------------+--------+---------+------------+---------------+
+    | Browser-        |Being   |None     | Yes        | None          |
+    | enforced        |removed |         |            | (application  |
+    | guarantees      |        |         |            | layer)        |
+    +-----------------+--------+---------+------------+---------------+
+
+                       Table 3: Mechanism comparison
+
+   The last row is the important caveat: WTX-1's properties are
+   application-layer contracts between the participating deployment's
+   components, verifiable by inspection and test, but not enforced by
+   the user agent.  Browser-native mechanisms (Related Website Sets
+   [RWS], storage access APIs) provide weaker linkage with stronger
+   enforcement; WTX-1 provides stronger controls with no enforcement
+   beyond the deployment itself.  Which is preferable is a policy
+   question this document does not decide.
+
+
+
+
+
+
+
+Surampudi               Expires 27 February 2027               [Page 51]
+
+Internet-Draft                    WTX-1                      August 2026
+
+
+Acknowledgments
+
+   This revision owes its shape to an extensive adversarial security and
+   privacy review of draft-01 and the reference implementation, which
+   identified the cleartext-token exposure, the tenant-spoofing and
+   token-burning issues, the overstated anonymity and compliance claims,
+   and the storage-terminology inaccuracies corrected here.  The author
+   thanks the reviewers and the implementers of the test suite that now
+   guards these behaviors.
+
+Author's Address
+
+   Ravi Teja Surampudi
+   Nylo Project
+   Email: ravisurampudi@outlook.com
+   URI:   https://github.com/tejasgit/nylo
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Surampudi               Expires 27 February 2027               [Page 52]

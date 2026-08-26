@@ -1,0 +1,2903 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE rfc [
+  <!ENTITY nbsp "&#160;">
+  <!ENTITY zwsp "&#8203;">
+  <!ENTITY nbhy "&#8209;">
+  <!ENTITY wj "&#8288;">
+]>
+<?xml-stylesheet type="text/xsl" href="rfc2629.xslt"?>
+<rfc
+  xmlns:xi="http://www.w3.org/2001/XInclude"
+  category="info"
+  docName="draft-surampudi-wtx1-02"
+  ipr="trust200902"
+  submissionType="independent"
+  xml:lang="en"
+  version="3">
+
+  <front>
+    <title abbrev="WTX-1">WTX-1: Cross-Domain Context Preservation Protocol</title>
+
+    <seriesInfo name="Internet-Draft" value="draft-surampudi-wtx1-02"/>
+
+    <author fullname="Ravi Teja Surampudi" initials="R. T." surname="Surampudi">
+      <organization>Nylo Project</organization>
+      <address>
+        <email>ravisurampudi@outlook.com</email>
+        <uri>https://github.com/tejasgit/nylo</uri>
+      </address>
+    </author>
+
+    <date year="2026" month="August" day="26"/>
+
+    <area>Applications and Real-Time</area>
+    <workgroup>Independent Submission</workgroup>
+
+    <keyword>cross-domain</keyword>
+    <keyword>analytics</keyword>
+    <keyword>privacy</keyword>
+    <keyword>pseudonymous</keyword>
+    <keyword>consent</keyword>
+    <keyword>authenticated encryption</keyword>
+    <keyword>PEARG</keyword>
+
+    <abstract>
+      <t>
+        This document defines WTX-1, a protocol for preserving
+        pseudonymous user context across web domains that are operated
+        by, or on behalf of, the same organization and that have
+        mutually opted into the exchange. The protocol operates only
+        after explicit user consent and does not use third-party
+        cookies, browser fingerprinting, or collection of direct
+        identifiers by default. Identifiers are pseudonymous, not
+        anonymous: they can be linked to application-level identities
+        by the deploying organization and may constitute personal data
+        under applicable law.
+      </t>
+      <t>
+        WTX-1 transfers context using an encrypted, authenticated,
+        destination-bound, single-use token carried in the URL
+        fragment. Tokens are issued and verified server side, with
+        atomic replay consumption, DNS-based domain authorization, and
+        short-lived server-signed write grants that authorize browser
+        write operations without trusting caller-supplied tenant
+        claims.
+      </t>
+      <t>
+        This revision (draft-02) replaces the signed-cleartext token
+        format of draft-01 with a sign-then-encrypt construction,
+        specifies write grants and replay-consumption ordering, defines
+        the consent lifecycle including withdrawal and asynchronous
+        cancellation, adds storage retention limits and user
+        inspection, reset, and revocation controls, and rescopes the
+        document's security, privacy, and performance claims to match
+        the reviewed reference implementation. A complete change log
+        appears in Appendix A.
+      </t>
+    </abstract>
+
+  </front>
+
+  <middle>
+
+    <section anchor="introduction">
+      <name>Introduction</name>
+
+      <section anchor="background">
+        <name>Background</name>
+        <t>
+          Third-party cookies have been the primary mechanism for
+          cross-domain user identification since the 1990s. With
+          Safari's Intelligent Tracking Prevention
+          (<xref target="ITP"/>) deployed in 2017, Firefox Enhanced
+          Tracking Protection in 2019, and Chrome's Privacy Sandbox
+          initiative (<xref target="PrivacySandbox"/>), the mechanism
+          is being removed or restricted across major browsers.
+        </t>
+        <t>
+          Organizations that legitimately operate multiple registrable
+          domains (for example, a healthcare system with separate
+          provider and patient-portal domains, a bank with separate
+          brand and servicing domains, or a government with separate
+          agency domains) lose the ability to understand that the same
+          visitor moved between their own properties, even when the
+          visitor has consented to that continuity.
+        </t>
+        <t>
+          WTX-1 addresses this narrow case: consented, pseudonymous
+          context continuity between domains that are commonly
+          operated and mutually authorized. It is deliberately not a
+          general-purpose cross-site tracking mechanism; the
+          authorization model (<xref target="authorization"/>) makes
+          the set of participating domains explicit and auditable.
+        </t>
+      </section>
+
+      <section anchor="prior-art">
+        <name>Relationship to Existing Link Decoration</name>
+        <t>
+          Carrying identity through navigation URLs ("link
+          decoration") is established practice. Google Analytics
+          cross-domain measurement appends a <tt>_gl</tt> parameter to
+          outbound links (<xref target="GA-LINKER"/>), and the Adobe
+          Experience Cloud Identity Service appends an
+          <tt>adobe_mc</tt> parameter (<xref target="ADOBE-MC"/>).
+          WTX-1 belongs to this transport family and does not claim to
+          introduce a new capability class.
+        </t>
+        <t>
+          What WTX-1 specifies, and what distinguishes it from
+          deployed linker parameters, is the security and privacy
+          contract of the handoff:
+        </t>
+        <ul spacing="normal">
+          <li>token contents are encrypted and authenticated rather
+          than encoded in cleartext or with reversible obfuscation
+          (<xref target="token-format"/>);</li>
+          <li>each token is bound to one issuing tenant and one
+          destination registrable domain, and is accepted at most once
+          (<xref target="verification"/>);</li>
+          <li>tokens travel in the URL fragment, which user agents do
+          not transmit in HTTP requests (<xref target="transport"/>);</li>
+          <li>participation requires published DNS authorization
+          records and server-side tenant configuration
+          (<xref target="authorization"/>); and</li>
+          <li>no identifier exists, and no token is issued or
+          accepted, until the user has affirmatively consented, and
+          consent withdrawal deletes stored identity
+          (<xref target="consent"/>).</li>
+        </ul>
+        <t>
+          This document is therefore best read as a hardening and
+          consent layer for an existing, widely deployed pattern, and
+          as a candidate baseline for evaluating that pattern in
+          privacy research venues such as the IRTF Privacy
+          Enhancements and Assessments Research Group
+          (<xref target="PEARG"/>).
+        </t>
+      </section>
+
+      <section anchor="scope">
+        <name>Scope</name>
+        <t>
+          In scope: the pseudonymous identifier format
+          (<xref target="waitag"/>); the token envelope, cryptographic
+          construction, issuance, and verification rules
+          (<xref target="token-format"/> and
+          <xref target="verification"/>); fragment transport and URL
+          cleanup (<xref target="transport"/>); domain authorization,
+          tenant resolution, and write grants
+          (<xref target="authorization"/>); the consent lifecycle
+          (<xref target="consent"/>); first-party storage integrity
+          and retention (<xref target="storage"/>); and user
+          transparency and control interfaces
+          (<xref target="user-controls"/>).
+        </t>
+        <t>
+          Out of scope: analytics event semantics beyond the boundary
+          described in <xref target="event-boundary"/>; identity
+          resolution against application accounts (only its privacy
+          consequences are discussed, in
+          <xref target="privacy-linkage"/>); and any assessment of
+          legal or regulatory compliance, which depends on
+          jurisdiction, purpose, and deployment context and is not a
+          property a protocol document can confer.
+        </t>
+      </section>
+
+      <section anchor="non-goals">
+        <name>What WTX-1 Does Not Provide</name>
+        <ul spacing="normal">
+          <li><t>Anonymity. WTX-1 identifiers are pseudonymous. The
+          deploying organization can link them to application-level
+          identities (<xref target="privacy-linkage"/>), and they may
+          be personal data under applicable law
+          (<xref target="privacy-pseudonymity"/>).</t></li>
+          <li><t>Protection against a fully compromised page. A script
+          with arbitrary execution on a participating page (for
+          example, via cross-site scripting) can observe what that
+          page can observe (<xref target="sec-xss"/>).</t></li>
+          <li><t>Guaranteed compatibility with future browser
+          anti-tracking heuristics
+          (<xref target="privacy-anti-tracking"/>).</t></li>
+          <li><t>Legal or regulatory compliance. This document uses
+          jurisdiction-neutral language throughout and makes no
+          compliance claims.</t></li>
+        </ul>
+      </section>
+
+      <section anchor="requirements-language">
+        <name>Requirements Language</name>
+        <t>
+          The key words "<bcp14>MUST</bcp14>", "<bcp14>MUST
+          NOT</bcp14>", "<bcp14>REQUIRED</bcp14>",
+          "<bcp14>SHALL</bcp14>", "<bcp14>SHALL NOT</bcp14>",
+          "<bcp14>SHOULD</bcp14>", "<bcp14>SHOULD NOT</bcp14>",
+          "<bcp14>RECOMMENDED</bcp14>", "<bcp14>NOT
+          RECOMMENDED</bcp14>", "<bcp14>MAY</bcp14>", and
+          "<bcp14>OPTIONAL</bcp14>" in this document are to be
+          interpreted as described in BCP&nbsp;14
+          <xref target="RFC2119"/> <xref target="RFC8174"/> when, and
+          only when, they appear in all capitals, as shown here.
+        </t>
+      </section>
+
+      <section anchor="requirement-classes">
+        <name>Classification of Requirements</name>
+        <t>
+          To keep interoperability requirements distinguishable from
+          advice, this document separates statements into four
+          classes:
+        </t>
+        <dl spacing="normal" newline="false">
+          <dt>Protocol requirements:</dt>
+          <dd>Behavior required for independent implementations to
+          interoperate securely: wire formats, cryptographic
+          constructions, validation and ordering rules, and error
+          codes. These use <bcp14>MUST</bcp14> /
+          <bcp14>MUST&nbsp;NOT</bcp14>.</dd>
+          <dt>Implementation recommendations:</dt>
+          <dd>Behavior that is strongly advised for security or
+          privacy but where alternatives exist. These use
+          <bcp14>SHOULD</bcp14> / <bcp14>RECOMMENDED</bcp14>, and
+          implementations that deviate are expected to understand the
+          consequences.</dd>
+          <dt>Optional behavior:</dt>
+          <dd>Features an implementation <bcp14>MAY</bcp14> provide
+          (for example, query-parameter transport,
+          <xref target="transport-query"/>). Absence does not affect
+          conformance.</dd>
+          <dt>Deployment policy:</dt>
+          <dd>Operational choices that belong to the deploying
+          organization, such as consent defaults, retention values
+          within protocol bounds, or rate-limit thresholds. These are
+          identified in the text as deployment policy, are collected
+          in <xref target="deployment"/>, and are not protocol
+          conformance items even where recommended values are
+          given.</dd>
+        </dl>
+        <t>
+          Statements about the reference implementation
+          (<xref target="impl-status"/>) are descriptive, not
+          normative.
+        </t>
+      </section>
+
+      <section anchor="changes-pointer">
+        <name>Changes from draft-01</name>
+        <t>
+          Draft-02 is a substantial revision: the token format,
+          authorization model, consent lifecycle, storage retention,
+          and claims language all changed. Implementers of draft-01
+          should treat this document as a replacement rather than a
+          delta. <xref target="changes"/> lists the changes and their
+          rationale.
+        </t>
+      </section>
+    </section>
+
+    <section anchor="terminology">
+      <name>Terminology</name>
+      <dl spacing="normal" newline="false">
+        <dt>Tenant:</dt>
+        <dd>The organization on whose behalf identifiers are created
+        and tokens are issued and verified. A tenant is identified by
+        a tenant identifier (also called a customer identifier) that
+        is resolved from server-side configuration, never from
+        browser-supplied assertions.</dd>
+
+        <dt>Source domain:</dt>
+        <dd>The registrable domain the user is navigating away from;
+        the domain on which the token's context originates.</dd>
+
+        <dt>Destination domain:</dt>
+        <dd>The registrable domain the user is navigating to; the only
+        domain at which a given token is acceptable.</dd>
+
+        <dt>Registrable domain:</dt>
+        <dd>The effective top-level domain plus one label (eTLD+1),
+        determined using the Public Suffix List
+        (<xref target="PSL"/>). All domain comparisons in this
+        protocol are made on registrable domains after Public Suffix
+        List parsing.</dd>
+
+        <dt>WaiTag:</dt>
+        <dd>The pseudonymous identifier defined in
+        <xref target="waitag"/>. WaiTags contain no direct
+        identifiers, but they are linkable across authorized domains
+        by design and are pseudonymous rather than anonymous.</dd>
+
+        <dt>Cross-domain token (token):</dt>
+        <dd>The encrypted, authenticated, destination-bound, single-use
+        object defined in <xref target="token-format"/> that carries
+        context between domains.</dd>
+
+        <dt>Token envelope:</dt>
+        <dd>The outer, cleartext-visible structure of a token: format
+        version, tenant identifier, destination domain, initialization
+        vector, ciphertext, and authentication tag
+        (<xref target="token-envelope"/>).</dd>
+
+        <dt>Inner payload:</dt>
+        <dd>The signed JSON object carried inside the envelope's
+        ciphertext (<xref target="token-payload"/>).</dd>
+
+        <dt>Issuer:</dt>
+        <dd>The server-side component that creates tokens for a
+        tenant. Token issuance is an authenticated server-side
+        operation; browsers never hold issuance credentials.</dd>
+
+        <dt>Verifier:</dt>
+        <dd>The server-side component that validates and atomically
+        consumes tokens (<xref target="verification"/>).</dd>
+
+        <dt>Write grant:</dt>
+        <dd>A short-lived, server-signed authorization that permits a
+        browser to perform specific write operations (event ingestion,
+        identifier registration, token verification) for one domain
+        and one tenant (<xref target="write-grants"/>).</dd>
+
+        <dt>Consent state:</dt>
+        <dd>One of <tt>unknown</tt>, <tt>granted</tt>,
+        <tt>denied</tt>, or <tt>withdrawn</tt>
+        (<xref target="consent"/>). Identity creation, storage,
+        token processing, and event transmission occur only in the
+        <tt>granted</tt> state.</dd>
+
+        <dt>Replay store:</dt>
+        <dd>The server-side record of consumed token identifiers used
+        to enforce single use (<xref target="verification"/> and
+        <xref target="deployment-replay"/>).</dd>
+
+        <dt>Early-cleanup script:</dt>
+        <dd>A small synchronous script placed at the top of the
+        destination page's <tt>head</tt> element that removes the
+        token from the URL before other scripts execute
+        (<xref target="transport-cleanup"/>).</dd>
+      </dl>
+
+      <section anchor="data-handling-terms">
+        <name>Data-Handling Terms</name>
+        <t>
+          Reviews of earlier revisions found that the words
+          "encrypted" and "signed" were applied to mechanisms that
+          were neither. This document uses the following terms
+          precisely, and implementations' user-facing documentation
+          <bcp14>SHOULD</bcp14> preserve these distinctions:
+        </t>
+        <dl spacing="normal" newline="false">
+          <dt>Encrypted:</dt>
+          <dd>Protected for confidentiality and integrity with an
+          authenticated cipher under a key not available to the
+          browser. In this protocol, only the token's inner payload is
+          encrypted (AES-256-GCM, <xref target="token-crypto"/>).</dd>
+          <dt>Signed:</dt>
+          <dd>Covered by a message authentication code (HMAC-SHA256)
+          computed with a key not available to the browser: the
+          token's inner payload (<xref target="token-payload"/>) and
+          write grants (<xref target="write-grants"/>).</dd>
+          <dt>Encoded:</dt>
+          <dd>Reversibly transformed (for example, Base64url
+          <xref target="RFC4648"/> or salted encoding of stored
+          identity) with no confidentiality or integrity value.
+          Anyone with the encoded value can decode it.</dd>
+          <dt>Tamper-evident:</dt>
+          <dd>Accompanied by an integrity check whose key is present
+          in the browser. Browser-stored identity records are
+          tamper-evident but not authenticated against an attacker who
+          can run script in the page context
+          (<xref target="storage-integrity"/>).</dd>
+        </dl>
+        <t>
+          Browser-stored identity data is encoded and tamper-evident;
+          it is not encrypted. Cross-domain tokens are encrypted and
+          signed. Consent state is stored as plain values.
+        </t>
+      </section>
+    </section>
+
+    <section anchor="overview">
+      <name>Protocol Overview</name>
+
+      <section anchor="actors">
+        <name>Actors</name>
+        <ul spacing="normal">
+          <li>The user and their user agent (browser).</li>
+          <li>The source page and destination page, each running a
+          WTX-1 client (typically a JavaScript SDK) in first-party
+          context on their respective domains.</li>
+          <li>The tenant's verification server, which issues write
+          grants, issues and verifies tokens, and maintains the replay
+          store. The issuer and verifier roles may be deployed
+          together or separately but share key material scope
+          (<xref target="token-crypto"/>).</li>
+          <li>The DNS, which publishes domain authorization records
+          (<xref target="dns-authorization"/>).</li>
+        </ul>
+      </section>
+
+      <section anchor="trust-model">
+        <name>Trust Model</name>
+        <ul spacing="normal">
+          <li>Browsers are never trusted to assert tenant identity.
+          Every browser write is authorized by a server-signed write
+          grant whose tenant binding comes from server-side
+          domain-to-tenant configuration
+          (<xref target="write-grants"/>).</li>
+          <li>Token issuance is trusted: it requires server-side
+          credentials (an API key in the reference implementation) and
+          is expected to be fronted by the tenant's own first-party
+          backend rather than exposed to browsers
+          (<xref target="issuance"/>).</li>
+          <li>The verification server is trusted by the tenant to hold
+          the token secret and enforce single use. Participating pages
+          trust the verification server's answers.</li>
+          <li>The DNS answer for authorization records is trusted to
+          the extent DNS is trusted; <xref target="sec-dns"/> analyzes
+          the consequences and mitigations.</li>
+          <li>Scripts running on a participating page other than the
+          WTX-1 client are not trusted, and the protocol limits, but
+          cannot eliminate, their visibility into tokens
+          (<xref target="sec-interception"/>).</li>
+        </ul>
+      </section>
+
+      <section anchor="flow">
+        <name>Protocol Flow</name>
+        <figure anchor="fig-flow">
+          <name>WTX-1 protocol flow</name>
+          <artwork type="ascii-art"><![CDATA[
+ Source page (source.example)          Verification server
+ ----------------------------          -------------------
+ 1. Consent granted; WaiTag
+    exists in first-party
+    storage.
+ 2. POST /api/tracking/grant  ------>  Resolve tenant from
+    { domain }                         domain config; sign
+                              <------  write grant
+ 3. Register WaiTag with
+    grant (X-Nylo-Grant)      ------>  Validate grant; store
+                                       pseudonymous record
+ 4. User activates link to
+    destination.example.
+    Client asks its backend
+    for a token; backend
+    calls issuance API        ------>  Issue encrypted,
+    (server credential)                signed, destination-
+                              <------  bound token
+ 5. Navigate to
+    https://destination.example/page#nylo_token=<token>
+
+ Destination page (destination.example)
+ ---------------------------------------
+ 6. Early-cleanup script strips the fragment and stashes
+    the token before other scripts run.
+ 7. Client requests write grant for destination.example.
+ 8. POST /api/tracking/verify-cross-domain-token
+    with token + grant        ------>  Authorize grant;
+                                       validate envelope;
+                                       decrypt; verify
+                                       signature; check
+                                       expiry and binding;
+                                       atomically consume
+                              <------  { identity } or error
+ 9. On success, the client adopts the WaiTag in first-party
+    storage and dispatches a transparency event
+    (nyloContextPreserved). On any error, the destination
+    starts a fresh, unlinked session.
+]]></artwork>
+        </figure>
+        <t>
+          Steps 2-3 and 7 fail closed: a page whose domain has no
+          tenant mapping receives no grant and therefore cannot
+          register identifiers, ingest events, or verify tokens.
+          Step 8's internal ordering is normative and is specified in
+          <xref target="verification"/>.
+        </t>
+      </section>
+
+      <section anchor="versioning">
+        <name>Version Negotiation</name>
+        <t>
+          The token envelope carries an integer format version
+          <tt>v</tt>. This document defines version 2. Verifiers
+          <bcp14>MUST</bcp14> reject any token whose envelope version
+          is absent or not equal to 2 with
+          <tt>UNSUPPORTED_VERSION</tt>, before attempting decryption.
+          In particular, the signed-cleartext format of draft-01
+          (version 1 or unversioned) <bcp14>MUST</bcp14> be rejected;
+          there is no downgrade path. The version is also bound inside
+          the authenticated additional data and the signed inner
+          payload (<xref target="token-crypto"/>), so an attacker
+          cannot re-label a token's version without detection.
+        </t>
+        <t>
+          Future versions are expected to be introduced by issuing
+          tokens with a new version number and deploying verifiers
+          that accept the new version explicitly. A verifier
+          <bcp14>MUST NOT</bcp14> apply version-2 processing to a
+          token labeled with another version.
+        </t>
+      </section>
+    </section>
+
+    <section anchor="waitag">
+      <name>Pseudonymous Identifier (WaiTag)</name>
+
+      <section anchor="waitag-format">
+        <name>Format</name>
+        <t>
+          A WaiTag is a lowercase ASCII string of the form:
+        </t>
+        <sourcecode type="abnf"><![CDATA[
+waitag  = "wai_" 19HEXDIG-L "_" 8HEXDIG-L
+HEXDIG-L = DIGIT / "a" / "b" / "c" / "d" / "e" / "f"
+]]></sourcecode>
+        <t>
+          that is, the literal prefix <tt>wai_</tt>, 19 lowercase
+          hexadecimal characters, an underscore, and 8 lowercase
+          hexadecimal characters. Consumers <bcp14>MUST</bcp14>
+          validate this shape and reject values that do not match
+          rather than normalizing them.
+        </t>
+      </section>
+
+      <section anchor="waitag-generation">
+        <name>Generation</name>
+        <t>
+          The 27 hexadecimal characters are consecutive substrings of
+          a single SHA-256 digest <xref target="FIPS-180-4"/> computed
+          over the concatenation of:
+        </t>
+        <ol spacing="normal">
+          <li>16 octets (128 bits) from a cryptographically secure
+          random source <xref target="RFC4086"/> (in browsers,
+          <tt>crypto.getRandomValues</tt>
+          <xref target="WebCrypto"/>);</li>
+          <li>the current timestamp; and</li>
+          <li>a per-domain salt.</li>
+        </ol>
+        <t>
+          The timestamp and salt act as diversifiers only; all
+          unpredictability comes from the 128-bit random input. The
+          identifier exposes 108 bits (27 hexadecimal characters) of
+          the digest.
+        </t>
+        <t>
+          Generation <bcp14>MUST</bcp14> fail closed: if no
+          cryptographically secure random source or digest primitive
+          is available, the client <bcp14>MUST NOT</bcp14> generate an
+          identifier, and cross-domain features remain disabled.
+          Clients <bcp14>MUST NOT</bcp14> fall back to
+          non-cryptographic randomness such as
+          <tt>Math.random()</tt>. (Draft-01 permitted such a fallback;
+          draft-02 removes it, matching the reviewed
+          implementation.)
+        </t>
+      </section>
+
+      <section anchor="waitag-properties">
+        <name>Properties</name>
+        <ul spacing="normal">
+          <li>No component of the identifier decodes to a timestamp,
+          domain, or counter; two identifiers generated in the same
+          millisecond on the same domain differ. (Draft-01's format
+          embedded a base-36 timestamp and a domain hash; draft-02's
+          digest construction removes both.)</li>
+          <li>Identifiers are unlinkable to each other absent the
+          deploying organization's records: a fresh WaiTag shares no
+          derivable relationship with a previous one.</li>
+          <li>Identifiers are pseudonymous, not anonymous. Within the
+          authorized domain set, the same WaiTag intentionally links
+          visits; the tenant can further link a WaiTag to an
+          application identity (<xref target="privacy-linkage"/>).
+          WaiTags may therefore be personal data under applicable law
+          (<xref target="privacy-pseudonymity"/>).</li>
+          <li>Identifiers are time-limited in storage
+          (<xref target="storage-retention"/>) and can be reset or
+          deleted by the user at any time
+          (<xref target="user-controls"/>).</li>
+        </ul>
+      </section>
+    </section>
+
+    <section anchor="token-format">
+      <name>Cross-Domain Token Format</name>
+      <t>
+        A WTX-1 token is a sign-then-encrypt object: the inner
+        payload is signed with HMAC-SHA256 <xref target="RFC2104"/>,
+        the signed payload is encrypted with AES-256-GCM
+        <xref target="SP800-38D"/>, and the result is wrapped in a
+        cleartext envelope carrying only the routing metadata needed
+        to select decryption keys. Confidentiality is not optional in
+        version 2: a conforming verifier never processes cleartext
+        context fields. (Draft-01 specified a signed but cleartext
+        payload; see <xref target="changes"/>.)
+      </t>
+
+      <section anchor="token-envelope">
+        <name>Envelope</name>
+        <t>
+          The token string is the Base64 encoding
+          (<xref target="RFC4648"/>, Section 4) of a UTF-8 JSON
+          <xref target="RFC8259"/> object with exactly these members:
+        </t>
+        <dl spacing="normal" newline="false">
+          <dt><tt>v</tt>:</dt>
+          <dd>Integer token format version. This document defines
+          version 2.</dd>
+          <dt><tt>tid</tt>:</dt>
+          <dd>Tenant identifier (string, at most 128 characters).</dd>
+          <dt><tt>dst</tt>:</dt>
+          <dd>Destination registrable domain, lowercase (string, at
+          most 253 characters).</dd>
+          <dt><tt>iv</tt>:</dt>
+          <dd>Base64-encoded 12-octet AES-GCM initialization
+          vector.</dd>
+          <dt><tt>ct</tt>:</dt>
+          <dd>Base64-encoded ciphertext of the signed inner payload
+          (at most 8192 octets of ciphertext).</dd>
+          <dt><tt>tag</tt>:</dt>
+          <dd>Base64-encoded 16-octet AES-GCM authentication tag.</dd>
+        </dl>
+        <t>
+          The complete token string <bcp14>MUST NOT</bcp14> exceed
+          16384 characters; verifiers <bcp14>MUST</bcp14> enforce this
+          and the per-field limits above before any cryptographic
+          processing, to bound resource consumption
+          (<xref target="sec-dos"/>).
+        </t>
+        <t>
+          <tt>tid</tt> and <tt>dst</tt> are the only cleartext fields.
+          They carry no user context; they exist so the verifier can
+          derive the correct keys, and both are additionally bound
+          into the AEAD associated data and repeated inside the signed
+          inner payload, so tampering with either is detected twice
+          (<xref target="token-crypto"/>).
+        </t>
+        <t>
+          When a token is placed in a URL fragment or query component,
+          the parameter value <bcp14>MUST</bcp14> be percent-encoded
+          as required for that component
+          (<xref target="RFC3986"/>); consumers decode the parameter
+          before Base64 decoding.
+        </t>
+      </section>
+
+      <section anchor="token-crypto">
+        <name>Key Derivation and Cryptographic Construction</name>
+        <t>
+          All keys are derived from a single server-side token secret
+          using HKDF-SHA256 <xref target="RFC5869"/>. The secret
+          <bcp14>MUST NOT</bcp14> be used directly as an encryption or
+          MAC key, and it is never available to browsers.
+        </t>
+        <sourcecode type="pseudocode"><![CDATA[
+key(purpose, tenant, destination) =
+  HKDF-SHA256(
+    IKM  = token secret (UTF-8),
+    salt = "nylo-wtx1-v2" (UTF-8),
+    info = purpose || "|" || tenant || "|"
+           || lowercase(destination) (UTF-8),
+    L    = 32 octets)
+
+encKey = key("enc", tid, dst)   ; AES-256-GCM key
+macKey = key("mac", tid, dst)   ; HMAC-SHA256 key
+
+AAD = "WTX1|v2|" || tid || "|" || lowercase(dst) (UTF-8)
+
+sig = lowercase-hex(HMAC-SHA256(macKey,
+        JSON(canonical inner payload)))
+plaintext  = JSON(canonical inner payload + {"sig": sig})
+(ct, tag)  = AES-256-GCM-Encrypt(encKey, iv, plaintext, AAD)
+token      = base64(JSON(envelope))
+]]></sourcecode>
+        <t>
+          Consequences that verifiers rely on:
+        </t>
+        <ul spacing="normal">
+          <li>Key separation by purpose: the encryption key is never
+          reused as a MAC key.</li>
+          <li>Key separation by context: a token minted for one
+          (tenant, destination) pair cannot be decrypted or verified
+          under another pair's keys. Cross-destination grafting fails
+          cryptographically, not merely by claim comparison.</li>
+          <li>AAD binding: altering <tt>tid</tt> or <tt>dst</tt> in
+          the envelope causes AEAD authentication failure even before
+          the inner signature is examined, and the AAD's fixed
+          <tt>WTX1|v2|</tt> prefix binds the protocol version.</li>
+        </ul>
+        <t>
+          The issuer <bcp14>MUST</bcp14> generate a fresh random
+          12-octet IV for every token from a cryptographically secure
+          source; an AES-GCM key/IV pair <bcp14>MUST NOT</bcp14> be
+          reused. Issuers <bcp14>MUST</bcp14> use a cryptographically
+          secure source for the <tt>jti</tt> claim (the reference
+          implementation uses 16 random octets, hex-encoded).
+        </t>
+      </section>
+
+      <section anchor="token-payload">
+        <name>Inner Payload and Canonicalization</name>
+        <t>
+          The inner payload is a JSON object whose members are
+          serialized in exactly this order:
+        </t>
+        <sourcecode type="json"><![CDATA[
+{
+  "v": 2,
+  "jti": "<128-bit random, lowercase hex>",
+  "iat": <issue time, integer milliseconds since epoch>,
+  "exp": <expiry time, integer milliseconds since epoch>,
+  "tenantId": "<tenant identifier>",
+  "sourceDomain": "<lowercase source registrable domain>",
+  "destinationDomain": "<lowercase destination domain>",
+  "waiTag": "<WaiTag being transferred>",
+  "sessionId": "<opaque session identifier>",
+  "userId": <application user id string, or null>
+}
+]]></sourcecode>
+        <t>
+          Canonicalization rule: the signature is computed over the
+          UTF-8 JSON serialization of the object with the ten members
+          above in exactly that order, with no insignificant
+          whitespace, and with <tt>userId</tt> normalized to JSON
+          <tt>null</tt> when absent. A verifier <bcp14>MUST</bcp14>
+          reconstruct this canonical form from the decrypted fields
+          and compare signatures in constant time. The <tt>sig</tt>
+          member (lowercase hexadecimal HMAC-SHA256 output) is
+          appended to the payload object after signing and is not
+          itself signed.
+        </t>
+        <t>
+          All of <tt>v</tt>, <tt>jti</tt>, <tt>iat</tt>, <tt>exp</tt>,
+          <tt>tenantId</tt>, <tt>sourceDomain</tt>,
+          <tt>destinationDomain</tt>, <tt>waiTag</tt>, and
+          <tt>sessionId</tt> are required claims; <tt>userId</tt> is
+          nullable. Issuers <bcp14>MUST</bcp14> refuse to issue tokens
+          with missing required claims, and verifiers
+          <bcp14>MUST</bcp14> reject payloads with absent, null, or
+          empty required claims (<tt>MISSING_CLAIMS</tt>).
+        </t>
+        <t>
+          Times are integer milliseconds. The default token lifetime
+          (<tt>exp</tt> - <tt>iat</tt>) is 300 seconds and is
+          configurable per deployment; issuers <bcp14>SHOULD
+          NOT</bcp14> exceed it materially, since token lifetime
+          bounds both the replay-store retention window and the
+          exposure window of a leaked token.
+        </t>
+      </section>
+
+      <section anchor="issuance">
+        <name>Issuance</name>
+        <t>
+          Token issuance is an authenticated, server-side operation:
+        </t>
+        <ol spacing="normal">
+          <li>The issuance endpoint <bcp14>MUST</bcp14> require a
+          server credential (the reference implementation uses an API
+          key in the <tt>X-API-Key</tt> header); requests without a
+          valid credential are rejected with <tt>UNAUTHORIZED</tt>
+          (HTTP 401). Browsers never hold issuance credentials;
+          deployments front issuance with their own first-party
+          backend.</li>
+          <li>The <tt>destinationDomain</tt> <bcp14>MUST</bcp14> be
+          supplied at issuance; tokens without a destination binding
+          <bcp14>MUST NOT</bcp14> be issued.</li>
+          <li>The tenant bound into the token <bcp14>MUST</bcp14> come
+          from the authenticated issuance context, not from
+          browser-supplied fields.</li>
+          <li>Both <tt>sourceDomain</tt> and
+          <tt>destinationDomain</tt> <bcp14>MUST</bcp14> be validated
+          as registrable domains (<xref target="PSL"/>), and both
+          <bcp14>MUST</bcp14> be authorized for the tenant
+          (<xref target="dns-authorization"/>) at issuance time;
+          issuance for an unauthorized domain is refused with
+          <tt>DOMAIN_NOT_VERIFIED</tt>. When domain-authorization
+          state cannot be evaluated, production issuers
+          <bcp14>MUST</bcp14> refuse issuance rather than skip the
+          check.</li>
+          <li>If no token secret is configured, the server
+          <bcp14>MUST NOT</bcp14> expose issuance or verification
+          endpoints at all (<xref target="deployment-failclosed"/>).</li>
+        </ol>
+      </section>
+    </section>
+
+    <section anchor="verification">
+      <name>Token Verification and Replay Consumption</name>
+
+      <section anchor="verification-endpoint">
+        <name>Verification Request</name>
+        <t>
+          The destination client submits the token to the tenant's
+          verification endpoint together with the destination domain
+          and a valid write grant (<xref target="write-grants"/>) in
+          the <tt>X-Nylo-Grant</tt> header:
+        </t>
+        <sourcecode type="http-message"><![CDATA[
+POST /api/tracking/verify-cross-domain-token HTTP/1.1
+Host: verify.tenant.example
+Content-Type: application/json
+X-Nylo-Grant: <signed write grant>
+
+{
+  "token": "<token string>",
+  "domain": "destination.example"
+}
+]]></sourcecode>
+        <t>
+          Both body members are <bcp14>REQUIRED</bcp14>; requests
+          missing either, or naming a syntactically invalid domain,
+          are rejected with HTTP 400 before the algorithm runs,
+          without a machine-readable code
+          (<xref target="verification-errors"/>).
+        </t>
+        <t>
+          The verifier <bcp14>MUST</bcp14> authorize before it
+          consumes: validation of a grant bearing the
+          <tt>ingest</tt> scope (<xref target="write-grants"/>) --
+          signature, expiry, scope, and domain binding -- and the
+          domain-authorization checks of
+          <xref target="verification-algorithm"/> complete before any
+          replay-protection state changes. Without this ordering, any
+          unauthenticated observer of a token could "verify" it once,
+          burning it and denying the legitimate destination its
+          handoff (<xref target="sec-dos"/>).
+        </t>
+        <t>
+          The tenant used for token binding comes exclusively from the
+          authenticated grant. A <tt>customerId</tt> member in the
+          request body is legacy-optional; when present it
+          <bcp14>MUST</bcp14> agree with the grant tenant and the
+          request <bcp14>MUST</bcp14> be rejected on conflict
+          (<tt>TENANT_MISMATCH</tt>) rather than silently
+          reassigned.
+        </t>
+      </section>
+
+      <section anchor="verification-algorithm">
+        <name>Verification Algorithm</name>
+        <t>
+          After grant authorization, the verifier
+          <bcp14>MUST</bcp14> perform the following checks in order,
+          returning the indicated error code at the first failure and
+          revealing no further detail:
+        </t>
+        <ol spacing="normal">
+          <li>Token string shape: a nonempty string of at most 16384
+          characters; otherwise <tt>MALFORMED_TOKEN</tt>.</li>
+          <li>Envelope decoding: Base64 decode, UTF-8 JSON parse to an
+          object; otherwise <tt>MALFORMED_TOKEN</tt>.</li>
+          <li>Version gate: <tt>v</tt> equal to 2; otherwise
+          <tt>UNSUPPORTED_VERSION</tt>. Legacy cleartext tokens fail
+          here before any further processing.</li>
+          <li>Tag presence: <tt>tag</tt> present and a string;
+          otherwise <tt>MISSING_SIGNATURE</tt>.</li>
+          <li>Envelope completeness and limits: <tt>tid</tt>,
+          <tt>dst</tt>, <tt>iv</tt>, <tt>ct</tt> nonempty strings
+          within the limits of <xref target="token-envelope"/>;
+          decoded IV exactly 12 octets, decoded tag exactly 16
+          octets, decoded ciphertext between 1 and 8192 octets;
+          otherwise <tt>MALFORMED_TOKEN</tt>.</li>
+          <li>Pre-decryption routing checks: the envelope <tt>dst</tt>
+          equals the expected destination
+          (<tt>DOMAIN_MISMATCH</tt>) and the envelope <tt>tid</tt>
+          equals the grant tenant (<tt>TENANT_MISMATCH</tt>). These
+          exist to give precise errors cheaply; the cryptographic
+          binding below re-enforces both.</li>
+          <li>AEAD decryption: derive the encryption key for
+          (<tt>tid</tt>, <tt>dst</tt>), decrypt with the envelope IV,
+          tag, and the AAD of <xref target="token-crypto"/>. Any
+          failure (wrong secret, wrong tenant or destination,
+          tampered ciphertext, IV, tag, or AAD) yields
+          <tt>INVALID_SIGNATURE</tt>.</li>
+          <li>Payload parse: UTF-8 JSON object; otherwise
+          <tt>MALFORMED_TOKEN</tt>.</li>
+          <li>Inner signature presence: <tt>sig</tt> present;
+          otherwise <tt>MISSING_SIGNATURE</tt>.</li>
+          <li>Claim completeness: all required claims present and
+          nonempty; otherwise <tt>MISSING_CLAIMS</tt>.</li>
+          <li>Payload version: <tt>v</tt> equal to 2; otherwise
+          <tt>UNSUPPORTED_VERSION</tt>.</li>
+          <li>Inner signature verification: recompute the canonical
+          serialization (<xref target="token-payload"/>) and the
+          HMAC-SHA256 under the (<tt>tid</tt>, <tt>dst</tt>) MAC key;
+          compare in constant time; otherwise
+          <tt>INVALID_SIGNATURE</tt>.</li>
+          <li>Envelope/payload binding: <tt>payload.tenantId</tt>
+          equals <tt>tid</tt> and
+          <tt>payload.destinationDomain</tt> equals <tt>dst</tt>;
+          otherwise <tt>INVALID_SIGNATURE</tt>. A spoofed envelope
+          cannot smuggle a foreign payload.</li>
+          <li>Issue-time check: <tt>iat</tt> is a number no further
+          than 60 seconds in the future (clock-skew allowance);
+          otherwise <tt>INVALID_IAT</tt>.</li>
+          <li>Expiry check: current time not after <tt>exp</tt>;
+          otherwise <tt>TOKEN_EXPIRED</tt>.</li>
+          <li>Post-decryption binding to the request: the signed
+          <tt>destinationDomain</tt> equals the requested domain
+          (<tt>DOMAIN_MISMATCH</tt>) and the signed <tt>tenantId</tt>
+          equals the grant tenant (<tt>TENANT_MISMATCH</tt>).</li>
+          <li>Domain authorization: both the signed
+          <tt>sourceDomain</tt> and the signed
+          <tt>destinationDomain</tt> <bcp14>MUST</bcp14> be currently
+          authorized for the token's tenant
+          (<xref target="dns-authorization"/>); otherwise
+          <tt>DOMAIN_NOT_VERIFIED</tt>. When domain-authorization
+          state cannot be evaluated, production verifiers
+          <bcp14>MUST</bcp14> reject rather than skip this step
+          (<xref target="deployment-failclosed"/>).</li>
+          <li>Atomic replay consumption, only after every check above
+          has passed (<xref target="replay"/>); a token that was
+          already consumed yields <tt>TOKEN_REPLAYED</tt>.</li>
+        </ol>
+      </section>
+
+      <section anchor="replay">
+        <name>Atomic Replay Consumption</name>
+        <t>
+          Each token is acceptable at most once. The consumption
+          operation <bcp14>MUST</bcp14> be an atomic check-and-set on
+          a collision-resistant token identifier (the reference
+          implementation uses the SHA-256 hash of the token string;
+          the <tt>jti</tt> claim is an equivalent key): of N
+          concurrent verifications of the same token, exactly one
+          succeeds and the rest receive <tt>TOKEN_REPLAYED</tt>.
+          Consumed-token records <bcp14>MUST</bcp14> be retained at
+          least until the token's <tt>exp</tt> has passed (plus the
+          clock-skew allowance); after that, expiry itself rejects the
+          token.
+        </t>
+        <t>
+          Replay state <bcp14>MUST NOT</bcp14> change for requests
+          that fail authorization or any verification step; only a
+          fully valid, authorized verification consumes the token. In
+          production the replay store must be durable and shared
+          across server processes; this is a deployment requirement
+          with fail-closed semantics
+          (<xref target="deployment-replay"/>).
+        </t>
+      </section>
+
+      <section anchor="verification-errors">
+        <name>Error Codes</name>
+        <t>
+          Verifiers <bcp14>MUST</bcp14> report every failure of
+          grant authorization (<xref target="write-grants"/>) and of
+          the verification algorithm
+          (<xref target="verification-algorithm"/>) in a JSON body of
+          the form
+          <tt>{"success": false, "error": "&lt;CODE&gt;"}</tt> using
+          the codes below. The error code, not the HTTP status, is
+          the interoperable signal; as a guideline, the reference
+          implementation maps <tt>MALFORMED_TOKEN</tt> to 400, an
+          absent grant to 401, an unconfigured grant subsystem to
+          503, and every other coded failure -- including unsupported
+          versions, grant validation, binding, authorization, and
+          replay -- to 403.
+        </t>
+        <t>
+          Two response classes intentionally fall outside this coded
+          contract: structural request errors (a missing
+          <tt>token</tt> or <tt>domain</tt> member, or a
+          syntactically invalid domain) are rejected with HTTP 400,
+          and internal server errors with HTTP 500; both carry only a
+          human-readable message alongside
+          <tt>{"success": false}</tt>, with no <tt>error</tt> member.
+          Clients <bcp14>MUST</bcp14> treat a failure response
+          without an <tt>error</tt> member exactly like a coded
+          failure: fresh session, no retry of the same token.
+        </t>
+        <table anchor="tbl-errors">
+          <name>Verification error codes</name>
+          <thead>
+            <tr><th>Code</th><th>Meaning</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><tt>UNSUPPORTED_VERSION</tt></td>
+            <td>Envelope or payload version is not 2 (includes all
+            legacy cleartext tokens).</td></tr>
+            <tr><td><tt>MALFORMED_TOKEN</tt></td>
+            <td>Token is not a decodable envelope within size limits,
+            or the decrypted payload is not a JSON object.</td></tr>
+            <tr><td><tt>MISSING_SIGNATURE</tt></td>
+            <td>Envelope lacks the AES-GCM authentication tag, or the
+            inner payload lacks its signature.</td></tr>
+            <tr><td><tt>MISSING_CLAIMS</tt></td>
+            <td>A required claim is absent, null, or empty.</td></tr>
+            <tr><td><tt>INVALID_SIGNATURE</tt></td>
+            <td>AEAD decryption or inner HMAC verification failed, or
+            envelope and payload routing disagree (covers ciphertext,
+            IV, tag, AAD, and payload tampering, and wrong-key
+            attempts).</td></tr>
+            <tr><td><tt>INVALID_IAT</tt></td>
+            <td>Token is future-dated beyond the clock-skew
+            allowance.</td></tr>
+            <tr><td><tt>TOKEN_EXPIRED</tt></td>
+            <td>Current time is after <tt>exp</tt>.</td></tr>
+            <tr><td><tt>TOKEN_REPLAYED</tt></td>
+            <td>Token was already consumed.</td></tr>
+            <tr><td><tt>DOMAIN_MISMATCH</tt></td>
+            <td>Token destination does not match the requesting
+            destination.</td></tr>
+            <tr><td><tt>DOMAIN_NOT_VERIFIED</tt></td>
+            <td>The signed source or destination domain is not
+            currently authorized for the token's tenant (also
+            returned at issuance;
+            <xref target="dns-authorization"/>).</td></tr>
+            <tr><td><tt>ORIGIN_MISMATCH</tt></td>
+            <td>A grant request's <tt>Origin</tt> header disagrees
+            with the requested domain (grant issuance,
+            <xref target="write-grants"/>).</td></tr>
+            <tr><td><tt>GRANT_REQUIRED</tt></td>
+            <td>No write grant accompanied a write request (reported
+            with HTTP 401).</td></tr>
+            <tr><td><tt>GRANT_DOMAIN_MISMATCH</tt></td>
+            <td>The write grant was issued for a different
+            domain.</td></tr>
+            <tr><td><tt>TENANT_MISMATCH</tt></td>
+            <td>Tenant routing (envelope, payload, or legacy body
+            field) disagrees with the authenticated grant
+            tenant.</td></tr>
+          </tbody>
+        </table>
+        <t>
+          Failures of the presented grant itself are reported with
+          <tt>GRANT_</tt>-prefixed codes: <tt>GRANT_REQUIRED</tt>
+          when no grant accompanies the request, and
+          <tt>GRANT_MALFORMED</tt>, <tt>GRANT_BAD_SIGNATURE</tt>,
+          <tt>GRANT_INVALID_CLAIMS</tt>, <tt>GRANT_NOT_YET_VALID</tt>,
+          <tt>GRANT_EXPIRED</tt>, or <tt>GRANT_SCOPE_MISSING</tt>
+          from grant validation (<xref target="write-grants"/>);
+          <tt>GRANTS_UNAVAILABLE</tt> (HTTP 503) signals an
+          unconfigured grant subsystem
+          (<xref target="deployment-failclosed"/>).
+        </t>
+        <t>
+          On any verification failure the destination client
+          <bcp14>MUST</bcp14> proceed as if no token had been
+          presented: it starts a fresh, unlinked session and
+          <bcp14>MUST NOT</bcp14> retry the same token
+          (<xref target="error-handling"/>).
+        </t>
+        <t>
+          A successful response carries the transferred identity,
+          the destination domain, and the verification time:
+        </t>
+        <sourcecode type="json"><![CDATA[
+{
+  "success": true,
+  "identity": {
+    "waiTag": "<WaiTag>",
+    "sessionId": "<session identifier>",
+    "userId": null
+  },
+  "domain": "<destination domain>",
+  "verifiedAt": "<ISO 8601 timestamp>"
+}
+]]></sourcecode>
+      </section>
+    </section>
+
+    <section anchor="transport">
+      <name>Token Transport</name>
+
+      <section anchor="transport-fragment">
+        <name>Fragment Transport (Default)</name>
+        <t>
+          Tokens travel in the URL fragment under the parameter name
+          <tt>nylo_token</tt> (consumers also accept the legacy alias
+          <tt>wai_token</tt>), serialized in
+          <tt>application/x-www-form-urlencoded</tt> form:
+        </t>
+        <artwork type="ascii-art"><![CDATA[
+https://destination.example/landing#nylo_token=<token>
+]]></artwork>
+        <t>
+          Per <xref target="RFC3986"/>, Section 3.5, the fragment
+          component is not sent in HTTP requests. With fragment
+          transport the token therefore does not appear in request
+          lines, <tt>Referer</tt> headers, server access logs, proxy
+          or CDN logs, or WAF logs of the destination or of third
+          parties; this is a structural property of HTTP, not a
+          runtime measurement (<xref target="measurable"/>). The
+          fragment does remain visible to the user agent itself:
+          address bar, browser history until cleanup, and any script
+          or extension that can read the page's location
+          (<xref target="sec-interception"/>).
+        </t>
+      </section>
+
+      <section anchor="transport-cleanup">
+        <name>Early-Cleanup Script</name>
+        <t>
+          Destination pages <bcp14>SHOULD</bcp14> place a small
+          synchronous script at the top of the <tt>head</tt> element
+          that, before any other script executes: (1) reads the
+          fragment; (2) if a token parameter is present, moves the
+          token into an implementation-specific in-memory variable;
+          and (3) rewrites the URL without the token via
+          <tt>history.replaceState()</tt>, so the address bar,
+          history entry, and any URL the user copies exclude the
+          token. The WTX-1 client later consumes the stashed token
+          and deletes the variable.
+        </t>
+        <t>
+          The reference early-cleanup script (informative):
+        </t>
+        <sourcecode type="javascript"><![CDATA[
+<script>
+(function () {
+  try {
+    var h = window.location.hash;
+    if (h && (h.indexOf("nylo_token=") > -1 ||
+              h.indexOf("wai_token=") > -1)) {
+      var p = new URLSearchParams(h.slice(1));
+      var t = p.get("nylo_token") || p.get("wai_token");
+      if (t) {
+        window.__nylo_early_token = t;
+        p.delete("nylo_token");
+        p.delete("wai_token");
+        var n = p.toString();
+        history.replaceState(null, "",
+          window.location.pathname + window.location.search +
+          (n ? "#" + n : ""));
+      }
+    }
+  } catch (e) { /* fail open: SDK falls back to hash */ }
+})();
+</script>
+]]></sourcecode>
+        <t>
+          Without early cleanup the protocol still functions -- the
+          client removes the token when it initializes -- but the
+          token remains in the URL for the whole interval between
+          navigation and client initialization, which enlarges the
+          exposure analyzed in <xref target="sec-interception"/> and
+          <xref target="privacy-decoration"/>.
+        </t>
+      </section>
+
+      <section anchor="transport-query">
+        <name>Query-Parameter Transport (Optional, Discouraged)</name>
+        <t>
+          Implementations <bcp14>MAY</bcp14> support carrying the
+          token in the query component for environments that destroy
+          fragments (some server-side redirect chains, some app
+          webviews). Query transport <bcp14>MUST</bcp14> be disabled
+          by default and enabled only by explicit configuration.
+          When enabled, the token is transmitted to the destination
+          server and appears in the six logging surfaces that
+          fragment transport avoids; deployments enabling it
+          <bcp14>SHOULD</bcp14> scrub token parameters from logs and
+          <bcp14>MUST</bcp14> still enforce single use and expiry,
+          which bound (but do not eliminate) the exposure.
+        </t>
+        <t>
+          Single-page applications using hash-based routing may
+          conflict with fragment transport; such sites can run the
+          token extraction before their router initializes or opt
+          into query transport with the caveats above.
+        </t>
+      </section>
+
+      <section anchor="transport-https">
+        <name>Transport Security</name>
+        <t>
+          All grant, issuance, verification, registration, and event
+          requests <bcp14>MUST</bcp14> use HTTPS. The protocol
+          <bcp14>MUST NOT</bcp14> be deployed over cleartext HTTP;
+          without TLS, request-carried material (grants, verification
+          bodies, query-transported tokens) is visible to network
+          intermediaries. Destination pages <bcp14>SHOULD</bcp14>
+          send <tt>Referrer-Policy: no-referrer</tt> or an equally
+          strict policy so that post-cleanup URLs do not leak to
+          third-party resources, even though the fragment itself is
+          never included in <tt>Referer</tt> headers.
+        </t>
+      </section>
+    </section>
+
+    <section anchor="authorization">
+      <name>Authorization</name>
+
+      <section anchor="dns-authorization">
+        <name>DNS Domain Authorization</name>
+        <t>
+          Before a domain can receive cross-domain identities, its
+          operator proves control of the domain by publishing a TXT
+          record:
+        </t>
+        <artwork type="ascii-art"><![CDATA[
+_nylo-verify.example.com. IN TXT
+    "nylo-domain-verify=<verification code>"
+]]></artwork>
+        <t>
+          The flow is: the tenant requests a verification code, the
+          domain operator publishes the record, and the tenant calls
+          the domain-verification endpoint, which resolves
+          <tt>_nylo-verify.&lt;domain&gt;</tt> and authorizes the
+          domain when the record matches. Authorization results are
+          cached server side and <bcp14>SHOULD</bcp14> be re-verified
+          periodically; removing the record revokes authorization at
+          the next revalidation
+          (<xref target="deployment-dns"/>).
+        </t>
+        <t>
+          Domain-verification management endpoints
+          <bcp14>MUST</bcp14> be authenticated with a server
+          credential (API key in the reference implementation);
+          caller-supplied tenant identifiers <bcp14>MUST NOT</bcp14>
+          be accepted as authentication. (Draft-01 permitted
+          management calls identified only by a
+          <tt>customerId</tt> field; draft-02 removes this.)
+        </t>
+        <t>
+          Authorization applies to the registrable domain; subdomains
+          of an authorized registrable domain inherit authorization
+          by default, and implementations <bcp14>MAY</bcp14> offer
+          exclusion configuration. The security of this mechanism is
+          bounded by the security of DNS itself; see
+          <xref target="sec-dns"/>.
+        </t>
+      </section>
+
+      <section anchor="tenant-resolution">
+        <name>Tenant Resolution</name>
+        <t>
+          Browsers never assert tenant identity. The tenant associated
+          with any browser-originated request is resolved exclusively
+          from server-side configuration (a domain-to-tenant mapping)
+          via the write-grant mechanism below. Caller-supplied tenant
+          assertions (<tt>customerId</tt> body fields, identity
+          headers) <bcp14>MUST NOT</bcp14> be trusted; where accepted
+          for legacy compatibility they <bcp14>MUST</bcp14> be
+          checked for agreement with the authenticated grant and the
+          request rejected on conflict (<tt>TENANT_MISMATCH</tt>),
+          never silently reassigned.
+        </t>
+      </section>
+
+      <section anchor="write-grants">
+        <name>Write Grants</name>
+        <t>
+          A write grant is a short-lived, server-signed authorization
+          that permits a browser to perform specific write operations
+          for exactly one domain and one tenant. All browser write
+          paths (event ingestion, identifier registration, token
+          verification) <bcp14>MUST</bcp14> require a valid grant;
+          requests without one are rejected with
+          <tt>GRANT_REQUIRED</tt> (HTTP 401).
+        </t>
+        <t>
+          Grant issuance:
+        </t>
+        <sourcecode type="http-message"><![CDATA[
+POST /api/tracking/grant HTTP/1.1
+Host: verify.tenant.example
+Origin: https://source.example
+Content-Type: application/json
+
+{ "domain": "source.example" }
+]]></sourcecode>
+        <ol spacing="normal">
+          <li>Requests with a malformed domain are rejected
+          (<tt>INVALID_DOMAIN</tt>). The server resolves the tenant
+          for the requested domain from server-side configuration;
+          requests for unmapped domains <bcp14>MUST</bcp14> be
+          rejected (<tt>UNKNOWN_DOMAIN</tt>).</li>
+          <li>When a browser <tt>Origin</tt> header is present, its
+          registrable domain <bcp14>MUST</bcp14> match the requested
+          domain (<tt>ORIGIN_MISMATCH</tt> otherwise). In production,
+          the <tt>Origin</tt> header <bcp14>MUST</bcp14> be required
+          (<tt>ORIGIN_REQUIRED</tt>).</li>
+          <li>The response carries the signed grant, its expiry, and
+          its scopes:
+          <tt>{"success": true, "grant": "&lt;payload&gt;.&lt;signature&gt;",
+          "expiresAt": "&lt;timestamp&gt;", "scopes": ["ingest",
+          "register"]}</tt>.</li>
+        </ol>
+        <t>
+          Grants are HMAC-SHA256-signed structures binding
+          <tt>{tenantId, domain, scopes, iat, exp, jti}</tt>. Two
+          scopes are defined: <tt>ingest</tt> authorizes event
+          ingestion and token verification (verification is a write
+          operation -- it consumes replay state and delivers identity
+          into the destination's session), and <tt>register</tt>
+          authorizes identifier registration. Each write endpoint
+          requires a grant whose scopes include the one it demands;
+          the reference issuer grants both scopes together. The
+          <bcp14>RECOMMENDED</bcp14> grant lifetime is 10 minutes;
+          the maximum is 24 hours.
+        </t>
+        <t>
+          Every write request carries the grant in the
+          <tt>X-Nylo-Grant</tt> header. Servers <bcp14>MUST</bcp14>
+          verify the grant signature, expiry, scope, and domain
+          binding, and <bcp14>MUST</bcp14> derive the tenant
+          exclusively from the grant.
+        </t>
+        <t>
+          Grants authorize writes only. They <bcp14>MUST NOT</bcp14>
+          be accepted as authentication for reading, linking, or
+          exporting identity data; read and export interfaces require
+          separate, stronger authentication that this document does
+          not define.
+        </t>
+        <t>
+          Note that a write grant is intentionally obtainable by any
+          script running on a mapped domain -- it establishes which
+          tenant and domain a write belongs to; it does not
+          authenticate the page's content or protect against a
+          compromised page (<xref target="sec-xss"/>).
+        </t>
+      </section>
+    </section>
+
+    <section anchor="consent">
+      <name>Consent Lifecycle</name>
+
+      <section anchor="consent-states">
+        <name>States</name>
+        <t>
+          The client maintains one of four persistent consent states:
+        </t>
+        <artwork type="ascii-art"><![CDATA[
+                 +---------+
+        +------- | unknown | -------+
+        |        +---------+        |
+   grant|                           |decline
+        v                           v
+   +---------+   withdraw      +----------+
+   | granted | --------------> | denied / |
+   |         | <-------------- | withdrawn|
+   +---------+   re-grant      +----------+
+
+   unknown:   no decision recorded (initial state)
+   granted:   identity and transfer features active
+   denied:    user declined from unknown
+   withdrawn: user revoked a previous grant
+]]></artwork>
+        <t>
+          The initial state <bcp14>MUST</bcp14> be <tt>unknown</tt>
+          absent a persisted decision. In every state other than
+          <tt>granted</tt>, the client <bcp14>MUST NOT</bcp14>
+          generate or store identifiers, <bcp14>MUST NOT</bcp14>
+          create, transmit, or accept cross-domain tokens,
+          <bcp14>MUST NOT</bcp14> queue or send events, and
+          <bcp14>MUST NOT</bcp14> initiate protocol network traffic.
+          The distinction between <tt>denied</tt> and
+          <tt>withdrawn</tt> is informational (it records whether an
+          identity previously existed); their behavior is identical.
+        </t>
+        <t>
+          How and when a deployment asks for consent (banner,
+          preference center, account setting) is deployment policy
+          and out of scope; the protocol contributes a fail-closed
+          default and the state machine above. Deployments in
+          jurisdictions that require prior consent for identifiers
+          can rely on the fact that nothing is generated, stored, or
+          transmitted before an affirmative grant.
+        </t>
+      </section>
+
+      <section anchor="consent-grant">
+        <name>Granting</name>
+        <t>
+          On transition to <tt>granted</tt>, the client generates a
+          WaiTag (<xref target="waitag-generation"/>), persists it in
+          first-party storage (<xref target="storage"/>), registers
+          it under a write grant, and begins any configured event
+          reporting (<xref target="event-boundary"/>). The consent
+          decision itself is persisted so subsequent page loads
+          resume without re-prompting.
+        </t>
+      </section>
+
+      <section anchor="consent-withdrawal">
+        <name>Withdrawal</name>
+        <t>
+          On transition out of <tt>granted</tt>, the client
+          <bcp14>MUST</bcp14>, before returning control:
+        </t>
+        <ol spacing="normal">
+          <li>delete the identifier and identity records from every
+          storage layer (cookie, localStorage, sessionStorage);</li>
+          <li>discard all queued, unsent events;</li>
+          <li>cease issuing, accepting, and verifying tokens; and</li>
+          <li>generate no further protocol network traffic.</li>
+        </ol>
+        <t>
+          Withdrawal is a client-side guarantee about the browser;
+          deletion of previously transmitted server-side data is a
+          separate obligation of the deploying organization outside
+          this protocol's scope, supported by the pseudonymous
+          identifier as a deletion key.
+        </t>
+      </section>
+
+      <section anchor="consent-races">
+        <name>Asynchronous Cancellation</name>
+        <t>
+          Identity startup is asynchronous (key generation, storage
+          writes, grant requests, registration calls), so consent can
+          change while work is in flight. Implementations
+          <bcp14>MUST</bcp14> ensure that work belonging to a
+          superseded consent decision neither persists nor transmits
+          anything after the decision changes, and neither deletes
+          state belonging to a newer decision:
+        </t>
+        <ul spacing="normal">
+          <li>A withdrawal during startup <bcp14>MUST</bcp14> leave
+          the browser with no stored identity, no queued events, and
+          no protocol network traffic, even if startup steps complete
+          after the withdrawal.</li>
+          <li>A re-grant after withdrawal <bcp14>MUST</bcp14> mint a
+          fresh identifier with no derivable relationship to the
+          deleted one, and a stale earlier startup <bcp14>MUST
+          NOT</bcp14> overwrite or purge the new identity.</li>
+          <li>A reset (<xref target="user-controls"/>) issued while
+          registration awaits a grant <bcp14>MUST</bcp14> prevent the
+          pre-reset identifier from ever being uploaded.</li>
+        </ul>
+        <t>
+          The reference implementation satisfies this with a
+          monotonically increasing epoch counter: every asynchronous
+          continuation validates, immediately before persisting or
+          transmitting, that the epoch and consent state under which
+          it started are still current. The mechanism is an
+          implementation choice; the observable requirements above
+          are normative. <xref target="sec-consent-races"/> discusses
+          why this matters for privacy.
+        </t>
+      </section>
+    </section>
+
+    <section anchor="storage">
+      <name>First-Party Storage</name>
+
+      <section anchor="storage-layers">
+        <name>Layers</name>
+        <t>
+          In the <tt>granted</tt> state, identity is persisted
+          redundantly in first-party storage: a cookie
+          <xref target="RFC6265"/> (24-hour maximum age, consistent
+          with JavaScript cookie capping under Intelligent Tracking
+          Prevention <xref target="ITP"/>), <tt>localStorage</tt>
+          (long-lived
+          layer, governed by the retention rules below), and
+          <tt>sessionStorage</tt> (tab-scoped). All layers are
+          first-party; the protocol uses no third-party storage.
+        </t>
+      </section>
+
+      <section anchor="storage-integrity">
+        <name>Encoding and Tamper Evidence</name>
+        <t>
+          Stored identity records are encoded (a reversible,
+          salted transformation) and carry an HMAC-SHA256 integrity
+          value computed with a key that is present in client-side
+          code. Terminology matters
+          (<xref target="data-handling-terms"/>): this storage is
+          encoded and tamper-evident, not encrypted, and
+          implementations and their documentation <bcp14>MUST
+          NOT</bcp14> describe it as encrypted. (Draft-01's storage
+          section used "obfuscation" and "encryption"
+          interchangeably; draft-02 corrects this.)
+        </t>
+        <t>
+          On every read, the integrity value <bcp14>MUST</bcp14> be
+          validated; a record that fails validation is rejected and
+          that layer cleared. If no layer holds a valid record, a
+          fresh identifier is generated. This defends against casual
+          tampering (developer tools, cookie editors) and cross-site
+          cookie injection. It is explicitly not a defense against a
+          script running in the page context, which can read the key
+          and forge valid records (<xref target="sec-storage"/>).
+        </t>
+      </section>
+
+      <section anchor="storage-retention">
+        <name>Retention and Expiry</name>
+        <t>
+          Stored identifiers <bcp14>MUST NOT</bcp14> persist
+          indefinitely. Two windows apply, evaluated on every read of
+          the long-lived layer:
+        </t>
+        <table anchor="tbl-retention">
+          <name>Retention windows</name>
+          <thead>
+            <tr><th>Rule</th><th>Default</th><th>Behavior</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Absolute lifetime</td>
+              <td>180 days from creation</td>
+              <td>Expires regardless of activity</td>
+            </tr>
+            <tr>
+              <td>Unused expiry</td>
+              <td>30 days from last use</td>
+              <td>Sliding window; "use" means restoration for active
+              tracking. Passive inspection via the context-view API
+              does not extend retention.</td>
+            </tr>
+          </tbody>
+        </table>
+        <ul spacing="normal">
+          <li>Expired records <bcp14>MUST</bcp14> be deleted from all
+          layers on read and never resurrected; a fresh, unlinked
+          identifier is minted instead.</li>
+          <li>Records without parseable timestamps (legacy formats)
+          <bcp14>MUST</bcp14> fail closed into expiry.</li>
+          <li>Both windows are configurable within
+          implementation-defined clamps; invalid values keep the
+          defaults. Because enforcement happens at read time,
+          shortening a window applies retroactively to already-stored
+          records. The specific window values are deployment policy;
+          the existence of both bounds is a protocol requirement.</li>
+        </ul>
+        <t>
+          These bounds limit how long any single pseudonymous
+          identifier can correlate visits
+          (<xref target="privacy-pseudonymity"/>). Implementations
+          <bcp14>MAY</bcp14> rotate identifiers more aggressively.
+        </t>
+      </section>
+    </section>
+
+    <section anchor="user-controls">
+      <name>User Transparency and Control</name>
+      <t>
+        Implementations <bcp14>MUST</bcp14> provide user-facing
+        capabilities equivalent to the following, which the reference
+        implementation exposes as public client APIs:
+      </t>
+      <dl spacing="normal" newline="false">
+        <dt>Inspection (<tt>getStoredContext()</tt>):</dt>
+        <dd>A passive view of everything stored in the browser for
+        this protocol, including retention/expiry projections.
+        Inspection <bcp14>MUST NOT</bcp14> count as "use" for the
+        sliding retention window and <bcp14>MUST NOT</bcp14>
+        otherwise extend retention.</dd>
+        <dt>Reset (<tt>resetContext()</tt>):</dt>
+        <dd>Deletes the stored identity and mints a fresh identifier
+        with no derivable relationship to the old one. A reset
+        <bcp14>MUST</bcp14> also invalidate in-flight work so the
+        pre-reset identifier is never subsequently persisted or
+        uploaded (<xref target="consent-races"/>).</dd>
+        <dt>Revocation (<tt>revokeContext()</tt>):</dt>
+        <dd>Withdraws consent entirely; equivalent to the withdrawal
+        transition of <xref target="consent-withdrawal"/> (delete
+        everything, abort pending work, cease traffic).</dd>
+        <dt>Continuity transparency:</dt>
+        <dd>Whenever context is restored -- from storage or across
+        domains -- the client dispatches a DOM event
+        (<tt>nyloContextPreserved</tt>) that pages can use to show a
+        user-visible continuity indicator. Implementations
+        <bcp14>SHOULD</bcp14> surface restoration rather than making
+        it silent.</dd>
+      </dl>
+
+      <section anchor="event-boundary">
+        <name>Boundary with Application Identity and Event Reporting</name>
+        <t>
+          WTX-1 proper ends at pseudonymous context transfer. Two
+          adjacent capabilities are deliberately separated from it:
+        </t>
+        <ul spacing="normal">
+          <li><t>Application identity linkage. An
+          <tt>identify()</tt>-style API that associates a WaiTag with
+          an application-level user identifier creates exactly the
+          linkage that pseudonymity otherwise avoids; the
+          <tt>userId</tt> claim exists so consented deployments can
+          carry that linkage. The privacy consequences are analyzed
+          in <xref target="privacy-linkage"/>; implementations
+          <bcp14>MUST</bcp14> document the consequence and
+          <bcp14>MUST NOT</bcp14> enable such linkage by
+          default.</t></li>
+          <li><t>Event reporting. Reporting page views, clicks, or
+          custom events is optional and separable. Every event
+          category <bcp14>MUST</bcp14> be individually opt-in
+          (default off), gated by the same consent state, and
+          authorized by write grants. Event payloads are minimized:
+          URLs are reduced to origin plus path (query strings and
+          fragments discarded unless individually allowlisted), and
+          fingerprint-capable attributes (user agent, language,
+          timezone, screen and viewport geometry, pointer
+          coordinates, and similar) are neither collected by the
+          reference client nor accepted by the reference server,
+          which strips them as defense in depth. Identity generation
+          and matching never use browser or device
+          attributes.</t></li>
+        </ul>
+      </section>
+    </section>
+
+    <section anchor="example">
+      <name>Complete Protocol Exchange (Informative)</name>
+      <t>
+        This section walks one full handoff. All identifiers, keys,
+        and encoded blobs are illustrative placeholders, not a
+        cryptographic test vector; <xref target="illustrative"/>
+        shows the corresponding structures in detail.
+      </t>
+      <ol spacing="normal">
+        <li>
+          <t>On <tt>source.example</tt>, the user has granted
+          consent. The client holds WaiTag
+          <tt>wai_9f86d081884c7d659a2fe_aa32b8b4</tt> and a write
+          grant for <tt>source.example</tt>.</t>
+        </li>
+        <li>
+          <t>The user activates a link to
+          <tt>destination.example</tt>. The client asks its
+          first-party backend for a token; the backend calls the
+          issuance API with its server credential:</t>
+          <sourcecode type="http-message"><![CDATA[
+POST /api/tracking/generate-cross-domain-token HTTP/1.1
+Host: verify.tenant.example
+X-API-Key: <server credential, never in the browser>
+Content-Type: application/json
+
+{
+  "waiTag": "wai_9f86d081884c7d659a2fe_aa32b8b4",
+  "sessionId": "sess_c1a2b3",
+  "sourceDomain": "source.example",
+  "destinationDomain": "destination.example"
+}
+]]></sourcecode>
+          <t>The issuer signs and encrypts the payload under keys
+          derived for (tenant <tt>t_1001</tt>,
+          <tt>destination.example</tt>) and returns the token.</t>
+        </li>
+        <li>
+          <t>The client decorates the navigation:</t>
+          <artwork type="ascii-art"><![CDATA[
+https://destination.example/landing#nylo_token=eyJ2IjoyLC...
+]]></artwork>
+        </li>
+        <li>
+          <t>On arrival, the early-cleanup script removes the
+          fragment before other scripts run and stashes the token;
+          the address bar shows
+          <tt>https://destination.example/landing</tt>.</t>
+        </li>
+        <li>
+          <t>The destination client obtains a write grant for
+          <tt>destination.example</tt> (scopes <tt>ingest</tt> and
+          <tt>register</tt>, <xref target="write-grants"/>), then
+          verifies under the <tt>ingest</tt> scope:</t>
+          <sourcecode type="http-message"><![CDATA[
+POST /api/tracking/verify-cross-domain-token HTTP/1.1
+Host: verify.tenant.example
+Content-Type: application/json
+X-Nylo-Grant: eyJ0ZW5hbnRJZCI6InRfMTAwMSIsImRvbWFpbiI6...
+
+{
+  "token": "eyJ2IjoyLC...",
+  "domain": "destination.example"
+}
+]]></sourcecode>
+          <t>The verifier authorizes the grant, runs the algorithm of
+          <xref target="verification-algorithm"/>, atomically
+          consumes the token, and answers:</t>
+          <sourcecode type="json"><![CDATA[
+{
+  "success": true,
+  "identity": {
+    "waiTag": "wai_9f86d081884c7d659a2fe_aa32b8b4",
+    "sessionId": "sess_c1a2b3",
+    "userId": null
+  },
+  "domain": "destination.example",
+  "verifiedAt": "2026-08-26T12:00:05.000Z"
+}
+]]></sourcecode>
+        </li>
+        <li>
+          <t>The destination client adopts the WaiTag into first-party
+          storage and dispatches <tt>nyloContextPreserved</tt>.</t>
+        </li>
+        <li>
+          <t>Error case: any later submission of the same token --
+          from a script that raced and lost, an extension that
+          captured it, or a shared link -- fails:</t>
+          <sourcecode type="json"><![CDATA[
+{ "success": false, "error": "TOKEN_REPLAYED" }
+]]></sourcecode>
+          <t>and the submitting page simply starts a fresh, unlinked
+          session.</t>
+        </li>
+      </ol>
+
+      <section anchor="error-handling">
+        <name>Client Error Behavior</name>
+        <t>
+          On any verification failure or network error, the
+          destination client <bcp14>MUST</bcp14> behave as if no
+          token had been presented: it starts a fresh session,
+          <bcp14>MUST NOT</bcp14> retry the same token, and
+          <bcp14>MUST NOT</bcp14> attempt to extract context from the
+          token itself (the payload is ciphertext). No user-visible
+          error is required; degraded continuity is the designed
+          failure mode. A token lost to a network failure before
+          consumption simply expires.
+        </t>
+      </section>
+    </section>
+
+    <section anchor="security">
+      <name>Security Considerations</name>
+
+      <section anchor="sec-model">
+        <name>Assets and Adversaries</name>
+        <t>
+          The assets are: the cross-domain token in transit through
+          the user agent; the WaiTag and its stored records; the
+          server-side token secret and grant-signing key; the replay
+          store; and the domain-authorization state. The adversaries
+          considered are: third-party scripts on participating pages;
+          browser extensions; an attacker with script execution on a
+          participating page (XSS); network observers (bounded by the
+          HTTPS requirement); parties who can influence DNS answers;
+          unauthenticated internet clients (denial of service); and
+          authorized participants behaving beyond their authorization
+          (collusion, <xref target="sec-collusion"/>).
+        </t>
+        <t>
+          Residual-risk language in this section is scoped: "none
+          identified" means none identified within the stated model
+          and assumptions, not an absolute guarantee. Draft-01's
+          categorical "Residual risk: None" entries are withdrawn.
+        </t>
+      </section>
+
+      <section anchor="sec-interception">
+        <name>Token Interception in the User Agent</name>
+        <t>
+          The token spends an interval in
+          <tt>window.location.hash</tt>. Three observer classes
+          matter:
+        </t>
+        <ul spacing="normal">
+          <li><t>Third-party page scripts. The early-cleanup script
+          (<xref target="transport-cleanup"/>) removes the token
+          before subsequent scripts execute; afterward the token
+          exists only in an implementation-specific variable until
+          the client consumes and deletes it. A script that knows the
+          variable name and runs in that window can read it; single
+          use and short expiry bound the value of doing so, and the
+          payload is ciphertext, so a captured token reveals only
+          routing metadata unless the interceptor also wins the
+          verification race -- in which case the legitimate page's
+          verification fails and the user simply gets an unlinked
+          session. There is no silent double-restore.</t></li>
+          <li><t>Browser extensions. A content script with
+          <tt>"run_at": "document_start"</tt> executes before any
+          page script, including early cleanup, and can read the
+          fragment. No application-layer mechanism can prevent this;
+          it is inherent to the extension model, and comparable
+          exposure exists for OAuth redirect parameters, tokens in
+          web storage, and cookies. The mitigations are the same as
+          above (single use, short expiry, ciphertext payload), plus
+          the observation that an extension with that capability
+          already reads all page content. This residual risk is
+          accepted and disclosed; a browser-mediated transfer API
+          would be required to eliminate it.</t></li>
+          <li><t>URL observers outside the page: browser history
+          before cleanup, copied links, shoulder surfing. The
+          fragment never reaches servers structurally
+          (<xref target="transport-fragment"/>); locally it is
+          bounded by early cleanup and by single use -- a copied
+          pre-cleanup URL stops working after the original
+          verification consumes the token, and after expiry in any
+          case.</t></li>
+        </ul>
+      </section>
+
+      <section anchor="sec-xss">
+        <name>Cross-Site Scripting</name>
+        <t>
+          An attacker with script execution on a participating page
+          operates with the page's full authority. Within this
+          protocol's scope such an attacker can: read the stashed
+          token before consumption or submit it first (winning the
+          race, after which the legitimate flow fails visibly); read
+          stored identity records from any storage layer; extract the
+          client-visible integrity key and forge tamper-evident
+          records (<xref target="sec-storage"/>); obtain a write
+          grant for the page's domain and submit writes as that page
+          (<xref target="write-grants"/>); and observe the WaiTag.
+          The attacker cannot decrypt tokens, forge tokens, mint
+          grants for other domains or tenants, read server-side
+          data, or extend a token's single use.
+        </t>
+        <t>
+          No cookie flag or client-side hardening changes this
+          materially: identity records exist in storage layers that
+          page script can read by design (an HttpOnly cookie would
+          protect one of three copies while breaking the
+          no-server-dependency deployment model). The defense is
+          preventing XSS. Deployments <bcp14>SHOULD</bcp14> apply
+          standard XSS prevention <xref target="OWASP-XSS"/> and a
+          Content Security Policy
+          (<xref target="deployment-csp"/>); clients
+          <bcp14>MUST</bcp14> treat token and identity values as
+          data, never inserting them into markup unescaped.
+        </t>
+      </section>
+
+      <section anchor="sec-replay-consider">
+        <name>Replay</name>
+        <t>
+          Single use is enforced by atomic consumption after full
+          authorization (<xref target="replay"/>). The design points
+          worth restating: consumption keyed by a collision-resistant
+          token identifier; consumption strictly last, so failed or
+          unauthorized attempts cannot burn tokens; records retained
+          at least through expiry plus skew; and durability across
+          server processes required in production
+          (<xref target="deployment-replay"/>) -- an in-memory store
+          behind a load balancer would accept the same token once
+          per process.
+        </t>
+      </section>
+
+      <section anchor="sec-dos">
+        <name>Denial of Service</name>
+        <ul spacing="normal">
+          <li>Token burning: because verification authorizes before
+          it consumes, an unauthenticated observer who saw a token
+          cannot invalidate it by submitting it; only a caller with a
+          valid grant for the token's destination can consume it.
+          (Draft-01's verifier consumed before some checks; draft-02
+          makes the ordering normative.)</li>
+          <li>Resource exhaustion: size and shape limits
+          (<xref target="token-envelope"/>) are enforced before any
+          key derivation or decryption; malformed input is rejected
+          on cheap checks first.</li>
+          <li>Replay-store exhaustion: consumed-token records expire
+          with token lifetime, bounding table growth; issuance is
+          authenticated, so attackers cannot mint unbounded valid
+          <tt>jti</tt> values; rate limiting
+          (<xref target="deployment-ratelimit"/>) bounds the
+          unauthenticated request stream.</li>
+          <li>Grant issuance flooding: grant requests are cheap to
+          serve and rate-limitable; grants confer only scoped,
+          short-lived write authority for the requesting page's own
+          mapped domain.</li>
+        </ul>
+      </section>
+
+      <section anchor="sec-dns">
+        <name>DNS Compromise and Spoofing</name>
+        <t>
+          Domain authorization is exactly as trustworthy as the DNS
+          answers it consumes. An attacker who can spoof answers to
+          the verification server, or who controls a participating
+          zone, can pass authorization for a domain they do not
+          legitimately control, and DNS compromise of a
+          participating domain typically implies broader compromise
+          (traffic redirection, certificate issuance). Mitigations:
+          resolvers <bcp14>SHOULD</bcp14> validate DNSSEC where the
+          zone is signed; verification servers <bcp14>SHOULD</bcp14>
+          resolve over authenticated channels (DNS over HTTPS or DNS
+          over TLS) to a trusted resolver; authorization results
+          <bcp14>MUST</bcp14> be re-verified periodically rather
+          than cached indefinitely
+          (<xref target="deployment-dns"/>), so record removal
+          revokes within the revalidation interval. Residual risk:
+          an attacker with sustained control of DNS answers within
+          the revalidation window; deployment-dependent.
+        </t>
+      </section>
+
+      <section anchor="sec-keys">
+        <name>Server-Side Key Compromise</name>
+        <t>
+          All token keys derive from one token secret
+          (<xref target="token-crypto"/>). HKDF separation confines
+          derived keys to their (purpose, tenant, destination)
+          context -- a leaked derived key for one destination does
+          not expose another's -- but it does not reduce the blast
+          radius of master-secret compromise: an attacker holding the
+          token secret can decrypt and forge tokens for every tenant
+          and destination served by that secret until it rotates.
+          The grant-signing key is similarly critical: its holder can
+          mint write grants for any mapped domain.
+        </t>
+        <t>
+          Accordingly: secrets <bcp14>MUST</bcp14> be stored in
+          server-side secret management (never in client-delivered
+          code or version control); deployments <bcp14>SHOULD</bcp14>
+          rotate the token secret periodically (90 days is the
+          reference recommendation) and <bcp14>SHOULD</bcp14> support
+          overlapping acceptance windows during rotation so
+          in-flight tokens survive; keys <bcp14>MUST NOT</bcp14>
+          appear in logs or error output; hardware-backed key storage
+          is worth using where available. Compromise recovery is
+          rotation plus invalidation of outstanding tokens (they
+          expire within minutes by design).
+        </t>
+      </section>
+
+      <section anchor="sec-storage">
+        <name>Stored-Identity Tampering</name>
+        <t>
+          The storage integrity mechanism
+          (<xref target="storage-integrity"/>) is tamper evidence
+          against actors without page-script execution: manual
+          editing via developer tools, generic cookie-editor
+          extensions, and cross-site cookie injection (a sibling
+          domain setting cookies for the registrable domain cannot
+          produce a record that validates). Against page-context
+          script it provides nothing -- the key is client-visible by
+          construction -- and this document deliberately does not
+          call it authentication. Verifiers never trust
+          browser-stored records for anything security-relevant;
+          registration and verification are server-authorized
+          (<xref target="write-grants"/>).
+        </t>
+      </section>
+
+      <section anchor="sec-consent-races">
+        <name>Consent Races</name>
+        <t>
+          Without the cancellation requirements of
+          <xref target="consent-races"/>, a withdrawal that arrives
+          while identity startup is in flight can lose the race: the
+          startup completes afterward and re-persists an identifier
+          the user just deleted -- a consent violation that looks
+          like a bug. The normative requirements (no persistence or
+          transmission from superseded work; no cross-epoch
+          purging; reset invalidates pending uploads) close this
+          class. Implementers are urged to test the interleavings
+          explicitly; the reference implementation's suite includes
+          gated-crypto and gated-grant race tests.
+        </t>
+      </section>
+
+      <section anchor="sec-collusion">
+        <name>Misbehavior by Authorized Participants</name>
+        <t>
+          WTX-1 constrains who can participate (tenant configuration,
+          DNS authorization) and what crosses domains (a consented,
+          pseudonymous, destination-bound token). It cannot
+          technically prevent authorized participants from misusing
+          what they legitimately receive: domains inside a tenant's
+          authorized set could pool identity beyond what was
+          disclosed to the user, and a tenant could link WaiTags to
+          application identities server side
+          (<xref target="privacy-linkage"/>). These are policy
+          violations, not protocol breaks. The protocol's
+          contribution is auditability: the participating set is
+          visible in public DNS records, the client exposes what is
+          stored (<xref target="user-controls"/>), and write grants
+          never authorize reads, so bulk export requires separate
+          authentication outside this protocol.
+        </t>
+      </section>
+
+      <section anchor="sec-logging">
+        <name>Logging Discipline</name>
+        <t>
+          Servers <bcp14>MUST NOT</bcp14> log token strings, grant
+          strings, or any derived key material; log the token
+          identifier hash if correlation is needed. With fragment
+          transport the token never reaches server logs structurally;
+          deployments enabling query transport <bcp14>MUST</bcp14>
+          scrub the token parameter from access logs
+          (<xref target="transport-query"/>). Verification failures
+          are safe and useful to log by error code.
+        </t>
+      </section>
+    </section>
+
+    <section anchor="privacy">
+      <name>Privacy Considerations</name>
+      <t>
+        This section follows the questions of
+        <xref target="RFC6973"/> where they apply. It states what the
+        protocol does and does not protect, without jurisdictional
+        claims; operators are responsible for their own legal
+        assessment.
+      </t>
+
+      <section anchor="privacy-pseudonymity">
+        <name>Pseudonymity, Not Anonymity</name>
+        <t>
+          A WaiTag contains no direct identifiers and is generated
+          from randomness, but it exists precisely to link visits by
+          the same user across authorized domains over time. It is
+          therefore a pseudonymous identifier, and this document does
+          not describe any part of the system as anonymous. Because
+          the deploying organization can hold additional information
+          that attributes a WaiTag to a person -- most directly via
+          application-identity linkage
+          (<xref target="privacy-linkage"/>), but also via account
+          data, support records, or server logs -- WaiTags and the
+          records keyed by them may constitute personal data under
+          applicable data protection law, and deployers should
+          assume they do when planning notice, lawful basis, access,
+          and deletion processes. (Draft-01 stated the design
+          "falls outside" personal-data definitions; that claim was
+          wrong and is withdrawn.)
+        </t>
+        <t>
+          What bounds the pseudonym's reach: linkage extends only
+          across the tenant's authorized domain set, only after
+          affirmative consent, only while consent stands, and only
+          within the retention windows
+          (<xref target="storage-retention"/>); reset and revocation
+          break linkage at the user's initiative
+          (<xref target="user-controls"/>); and a fresh identifier
+          has no derivable relationship to its predecessor.
+        </t>
+      </section>
+
+      <section anchor="privacy-decoration">
+        <name>Link Decoration, History, and Local Observability</name>
+        <t>
+          WTX-1 is a link-decoration protocol and inherits that
+          shape's local observability: until cleanup runs, the
+          decorated URL -- including the token -- exists in the
+          address bar, in the history entry for the navigation, in
+          anything that snapshots the URL (sync services, "recently
+          closed" features), and in any link preview the source page
+          shows. What distinguishes WTX-1's exposure: the token is
+          ciphertext except tenant and destination routing fields, so
+          an observer of the URL learns that a handoff occurred
+          between which properties, but not the identifier or any
+          context; the token stops working after one use or five
+          minutes; and early cleanup removes it from the URL and the
+          history entry promptly on arrival. The fact that a handoff
+          occurred is itself a (deliberately minimal) disclosure;
+          deployments for which even that is sensitive should not
+          use URL-carried transfer at all.
+        </t>
+      </section>
+
+      <section anchor="privacy-correlation">
+        <name>Correlation Scope and Collusion</name>
+        <t>
+          By design, consented cross-domain correlation is the
+          feature. The privacy-relevant boundaries are: the
+          participating set is finite, tenant-configured, and
+          DNS-auditable; correlation requires the token path (no
+          passive matching -- identity generation and matching never
+          use browser or device attributes); and nothing in the
+          protocol supports correlation across tenants. Collusion
+          beyond the disclosed set -- authorized domains pooling data
+          contrary to what users were told -- is a policy violation
+          the protocol cannot prevent, only make auditable
+          (<xref target="sec-collusion"/>). Users can bound their
+          exposure unilaterally: reset mints an unlinked identifier;
+          withdrawal deletes local state entirely.
+        </t>
+      </section>
+
+      <section anchor="privacy-linkage">
+        <name>Application-Identity Linkage</name>
+        <t>
+          If a deployment calls an <tt>identify()</tt>-style API, or
+          issues tokens with a non-null <tt>userId</tt>, the
+          pseudonymous identifier becomes linked to an
+          application-level identity, and every record keyed by that
+          WaiTag -- past and future, on every domain where it is
+          restored -- becomes attributable to that account. This is
+          the single most consequential privacy action in the
+          system. It <bcp14>MUST</bcp14> be disabled by default,
+          <bcp14>SHOULD</bcp14> be taken only with notice to the
+          user and a considered basis, and <bcp14>MUST</bcp14> be
+          disclosed in implementation documentation. The protocol
+          deliberately keeps <tt>userId</tt> nullable so deployments
+          can run purely pseudonymous.
+        </t>
+      </section>
+
+      <section anchor="privacy-minimization">
+        <name>Data Minimization</name>
+        <t>
+          The token carries exactly the ten claims of
+          <xref target="token-payload"/>: version, token id, two
+          timestamps, tenant, two domains, WaiTag, session id, and
+          nullable user id. No behavioral data, page content,
+          interaction history, or device attributes ride the token.
+          Event reporting, where enabled, is separately minimized
+          (<xref target="event-boundary"/>): URLs reduced to origin
+          plus path, fingerprint-capable attributes stripped at both
+          ends, invalid values rejected rather than normalized. The
+          reference server stores no IP addresses with protocol
+          records; infrastructure access logs are a deployment
+          matter deployers should align with their retention
+          policy.
+        </t>
+      </section>
+
+      <section anchor="privacy-anti-tracking">
+        <name>Interaction with Browser Anti-Tracking</name>
+        <t>
+          WTX-1 uses no third-party cookies, no third-party storage,
+          no redirect or bounce patterns, and no fingerprinting; its
+          cookie layer respects script-written-cookie capping
+          (<xref target="ITP"/>). The working hypothesis is that
+          current tracking-prevention heuristics in major browsers do
+          not disrupt it. This has not been verified with browser
+          vendors, and heuristics evolve -- in particular,
+          link-decoration countermeasures could strip or truncate
+          unknown fragment parameters, which would break handoff
+          (safely: the destination starts an unlinked session). This
+          document records the interaction as a testable hypothesis,
+          not a guarantee, and the honest position is that a
+          consent-gated protocol should be legible to browser policy
+          rather than engineered around it; <xref target="PEARG"/>
+          review is sought partly for this question.
+        </t>
+      </section>
+
+      <section anchor="privacy-residual">
+        <name>Residual Privacy Risks</name>
+        <ul spacing="normal">
+          <li>Extensions and page-compromising scripts can observe
+          tokens pre-consumption and stored identity post-restore
+          (<xref target="sec-interception"/>,
+          <xref target="sec-xss"/>).</li>
+          <li>Authorized participants can misuse legitimately
+          received data; linkage via <tt>userId</tt> is possible by
+          deployment choice (<xref target="privacy-linkage"/>).</li>
+          <li>The occurrence of a handoff between two named
+          properties is observable locally in pre-cleanup URLs
+          (<xref target="privacy-decoration"/>).</li>
+          <li>First-party persistence, while bounded and revocable,
+          still means a stable identifier exists for up to the
+          retention window on each participating domain.</li>
+          <li>Server-side records keyed by WaiTags are outside the
+          browser's deletion reach; withdrawal deletes the browser
+          state and leaves server-side deletion to the deployer's
+          data governance.</li>
+        </ul>
+      </section>
+    </section>
+
+    <section anchor="measurable">
+      <name>Verifiable Properties and Measured Observations</name>
+      <t>
+        Earlier revisions presented performance figures as protocol
+        claims. This revision separates three kinds of statement:
+      </t>
+      <section anchor="measurable-structural">
+        <name>Structural Properties (Verifiable by Construction)</name>
+        <ul spacing="normal">
+          <li>With fragment transport, zero token octets appear in
+          any HTTP request, and hence in none of the six standard
+          logging surfaces (request line, <tt>Referer</tt> to the
+          destination, <tt>Referer</tt> to third parties, proxy/CDN
+          logs, WAF logs, pre-TLS packet capture of requests). This
+          follows from <xref target="RFC3986"/>, Section 3.5, and is
+          verifiable by packet capture: request a page as
+          <tt>/landing#nylo_token=CANARY</tt> and confirm the canary
+          is absent from all captured requests and logs, then repeat
+          with query transport and confirm presence.</li>
+          <li>Design constants: 128 bits of CSPRNG input per
+          identifier, 108 bits exposed
+          (<xref target="waitag-generation"/>); expected collision
+          probability about N^2 / 2^109 for N identifiers (about
+          1.5e-15 at N = 10^9); 12-octet IV and 16-octet tag; default
+          300-second lifetime; 60-second skew allowance; single
+          use.</li>
+          <li>Rejection behavior: legacy cleartext tokens,
+          tag-stripped envelopes, and bit-flipped ciphertexts are
+          rejected with the specific codes of
+          <xref target="verification-errors"/>. The reference test
+          suite exercises each case, including the
+          concurrent-verification single-winner property.</li>
+        </ul>
+      </section>
+      <section anchor="measurable-measured">
+        <name>Measured Observations (Reference Implementation)</name>
+        <t>
+          The following were observed on the reference implementation
+          and are reported as scoped measurements with methodology,
+          not as guarantees; independent reproduction is invited via
+          the client's timing API (<tt>getTimingMetrics()</tt>),
+          which timestamps each token lifecycle phase with
+          <tt>performance.now()</tt>:
+        </t>
+        <ul spacing="normal">
+          <li>Token visibility window with early cleanup deployed:
+          under 1 millisecond from script start to URL rewrite in the
+          reference pages measured; without early cleanup, the window
+          is the full interval from navigation to client
+          initialization (hundreds of milliseconds on typical pages,
+          indefinite if the client never loads).</li>
+          <li>End-to-end verification time is dominated by one
+          network round trip to the verification endpoint;
+          server-side verification work (decode, derive, decrypt,
+          verify, consume) is small by comparison. Absolute figures
+          depend on deployment and network and are not specified
+          here.</li>
+        </ul>
+        <t>
+          Hypotheses a deployment should test rather than assume:
+          that its pages load the cleanup script first in practice;
+          that its replay store sustains its verification rate; and
+          that current browser heuristics leave its fragments intact
+          (<xref target="privacy-anti-tracking"/>).
+        </t>
+      </section>
+    </section>
+
+    <section anchor="deployment">
+      <name>Deployment Considerations</name>
+      <t>
+        Items here are operational requirements and policy for
+        running WTX-1 in production; they complement, and where
+        marked extend, the protocol requirements.
+      </t>
+
+      <section anchor="deployment-replay">
+        <name>Durable Replay Store</name>
+        <t>
+          In production, the replay store <bcp14>MUST</bcp14> be
+          durable and shared across all server processes (a database
+          or distributed cache); a production deployment configured
+          without one <bcp14>MUST</bcp14> refuse to start rather
+          than fall back to per-process memory. In-memory stores are
+          for development only: they forget consumed tokens on
+          restart and are per-process behind load balancers, both of
+          which re-open replay.
+        </t>
+      </section>
+
+      <section anchor="deployment-failclosed">
+        <name>Fail-Closed Configuration</name>
+        <ul spacing="normal">
+          <li>If the token secret is not configured, the server
+          <bcp14>MUST NOT</bcp14> register issuance or verification
+          endpoints and <bcp14>MUST</bcp14> log a clear startup
+          error; it <bcp14>MUST NOT</bcp14> accept unsigned or
+          cleartext tokens under any fallback.</li>
+          <li>Development and demo modes <bcp14>MAY</bcp14> generate
+          an ephemeral secret at startup but <bcp14>MUST</bcp14> log
+          prominently that tokens will not survive restarts.</li>
+          <li>Grant issuance in production <bcp14>MUST</bcp14>
+          require the browser <tt>Origin</tt> header
+          (<xref target="write-grants"/>).</li>
+          <li>Unknown domains, unmapped tenants, malformed
+          identifiers, and out-of-window timestamps are rejected,
+          not normalized.</li>
+        </ul>
+      </section>
+
+      <section anchor="deployment-keys">
+        <name>Key Management</name>
+        <t>
+          Store the token secret and grant-signing key in a secrets
+          manager; rotate the token secret on a schedule (the
+          reference recommendation is 90 days) with an overlap window
+          during which tokens issued under the outgoing secret are
+          still verifiable; monitor for verification-failure spikes
+          during rotation; never emit key material to logs
+          (<xref target="sec-keys"/>).
+        </t>
+      </section>
+
+      <section anchor="deployment-dns">
+        <name>DNS Revalidation</name>
+        <t>
+          Re-verify domain authorization on a schedule appropriate to
+          the deployment's risk tolerance (hours to days, not
+          months); treat revalidation failure as revocation; prefer
+          DNSSEC-validating or authenticated (DoH/DoT) resolution
+          for authorization lookups (<xref target="sec-dns"/>).
+        </t>
+      </section>
+
+      <section anchor="deployment-ratelimit">
+        <name>Rate Limiting</name>
+        <t>
+          Rate-limit grant issuance, verification, registration, and
+          ingestion endpoints. The reference guideline is on the
+          order of 100 verification requests per client address per
+          minute with backoff on failures; the specific numbers are
+          deployment policy and should be set from observed
+          legitimate traffic (<xref target="sec-dos"/>).
+        </t>
+      </section>
+
+      <section anchor="deployment-csp">
+        <name>Content Security Policy</name>
+        <t>
+          Deploy CSP on participating pages as an XSS mitigation
+          (<xref target="sec-xss"/>). The early-cleanup script is
+          inline by necessity (it must run before external scripts
+          load), so allow it via a nonce or a script hash rather
+          than a blanket <tt>'unsafe-inline'</tt> where the
+          deployment can manage nonces; include the verification
+          origin in <tt>connect-src</tt>; consider
+          <tt>frame-ancestors 'none'</tt> where framing is not
+          needed.
+        </t>
+      </section>
+
+      <section anchor="deployment-logging">
+        <name>Logging and Monitoring</name>
+        <t>
+          Apply the logging rules of <xref target="sec-logging"/>;
+          align infrastructure access-log retention with the
+          protocol's data-minimization posture
+          (<xref target="privacy-minimization"/>); monitor replay
+          rejections (<tt>TOKEN_REPLAYED</tt>), grant failures
+          (<tt>GRANT_REQUIRED</tt>, <tt>ORIGIN_MISMATCH</tt>,
+          <tt>UNKNOWN_DOMAIN</tt>), and authorization failures as
+          abuse signals; alert on issuance-endpoint authentication
+          failures.
+        </t>
+      </section>
+    </section>
+
+    <section anchor="impl-status">
+      <name>Implementation Status</name>
+      <t>
+        This section records the status of known implementations at
+        the time of posting, per the spirit of
+        <xref target="RFC7942"/>, and is to be removed before any
+        publication as an RFC.
+      </t>
+      <t>
+        One implementation is known: Nylo
+        (<eref target="https://github.com/tejasgit/nylo"/>), the
+        reference implementation by this document's author,
+        comprising a browser client and a Node.js verification
+        server. Maturity: pre-alpha; not production-deployed.
+        Licensing: dual (open-source core, commercial terms for
+        cross-domain components); see the repository. Coverage: the
+        implementation and its automated test suite exercise the v2
+        token construction and every verification error path of
+        <xref target="verification-algorithm"/>, concurrent
+        single-winner replay consumption, write-grant authorization
+        including tenant-conflict rejection, the consent state
+        machine including the asynchronous-cancellation races of
+        <xref target="consent-races"/>, storage integrity and
+        retention enforcement, registrable-domain parsing, and the
+        user-control APIs of <xref target="user-controls"/>.
+      </t>
+      <t>
+        There is no second, independent implementation yet, and
+        therefore no interoperability report; the wire contract in
+        this revision (canonical serialization, key derivation,
+        error ordering) was specified to make an independent
+        implementation and such a report possible.
+      </t>
+    </section>
+
+    <section anchor="conformance">
+      <name>Conformance Checklist (Informative)</name>
+      <t>
+        A condensed review aid; section references are normative
+        where they conflict.
+      </t>
+      <section anchor="conformance-issuer">
+        <name>Issuer</name>
+        <ul spacing="normal">
+          <li>Authenticates issuance requests; browsers never hold
+          issuance credentials (<xref target="issuance"/>).</li>
+          <li>Requires destination domain; binds tenant from
+          authenticated context (<xref target="issuance"/>).</li>
+          <li>Derives per-(purpose, tenant, destination) keys via
+          HKDF-SHA256 with the salt and info layout of
+          <xref target="token-crypto"/>; never uses the raw
+          secret.</li>
+          <li>Signs the canonical payload, then encrypts with
+          AES-256-GCM under a fresh 12-octet random IV with the AAD
+          of <xref target="token-crypto"/>.</li>
+          <li>Issues 300-second (default) lifetimes; random 128-bit
+          <tt>jti</tt> (<xref target="token-payload"/>).</li>
+        </ul>
+      </section>
+      <section anchor="conformance-verifier">
+        <name>Verifier</name>
+        <ul spacing="normal">
+          <li>Requires a valid write grant bearing the
+          <tt>ingest</tt> scope before any token processing; derives
+          tenant only from the grant
+          (<xref target="verification-endpoint"/>).</li>
+          <li>Runs the ordered algorithm of
+          <xref target="verification-algorithm"/> with its error
+          codes; enforces size limits before cryptography.</li>
+          <li>Confirms both signed domains are currently authorized
+          for the token's tenant (<tt>DOMAIN_NOT_VERIFIED</tt>)
+          before consumption; rejects when authorization state
+          cannot be evaluated in production
+          (<xref target="verification-algorithm"/>).</li>
+          <li>Reports every coded failure as
+          <tt>{"success": false, "error": "&lt;CODE&gt;"}</tt>;
+          message-only responses are limited to structural HTTP 400
+          rejections and internal HTTP 500 errors
+          (<xref target="verification-errors"/>).</li>
+          <li>Rejects non-version-2 tokens outright; no downgrade
+          (<xref target="versioning"/>).</li>
+          <li>Consumes atomically, last, and only on full success
+          (<xref target="replay"/>).</li>
+          <li>Uses a durable shared replay store in production;
+          refuses to start without one
+          (<xref target="deployment-replay"/>).</li>
+          <li>Fails closed when unconfigured
+          (<xref target="deployment-failclosed"/>).</li>
+        </ul>
+      </section>
+      <section anchor="conformance-client">
+        <name>Client</name>
+        <ul spacing="normal">
+          <li>Generates identifiers only in the <tt>granted</tt>
+          state, fail-closed CSPRNG-and-digest only
+          (<xref target="waitag-generation"/>,
+          <xref target="consent-states"/>).</li>
+          <li>Performs no storage, token, event, or network activity
+          outside <tt>granted</tt>
+          (<xref target="consent-states"/>).</li>
+          <li>On withdrawal: deletes all layers, discards queued
+          events, stops traffic, and cancels in-flight work per
+          <xref target="consent-races"/>.</li>
+          <li>Uses fragment transport by default; deploys early
+          cleanup; treats verification failure as fresh-session,
+          no-retry (<xref target="transport"/>,
+          <xref target="error-handling"/>).</li>
+          <li>Validates stored-record integrity on read; enforces
+          retention windows on read
+          (<xref target="storage"/>).</li>
+          <li>Provides inspection, reset, and revocation controls
+          and a restore-transparency signal
+          (<xref target="user-controls"/>).</li>
+          <li>Keeps application-identity linkage off by default
+          (<xref target="privacy-linkage"/>).</li>
+        </ul>
+      </section>
+      <section anchor="conformance-deployment">
+        <name>Deployment</name>
+        <ul spacing="normal">
+          <li>HTTPS everywhere; strict referrer policy on
+          destination pages (<xref target="transport-https"/>).</li>
+          <li>DNS authorization published and revalidated;
+          authenticated management endpoints
+          (<xref target="dns-authorization"/>,
+          <xref target="deployment-dns"/>).</li>
+          <li>Key custody and rotation per
+          <xref target="deployment-keys"/>; rate limits per
+          <xref target="deployment-ratelimit"/>; CSP per
+          <xref target="deployment-csp"/>; logging per
+          <xref target="sec-logging"/>.</li>
+        </ul>
+      </section>
+    </section>
+
+    <section anchor="iana">
+      <name>IANA Considerations</name>
+      <t>
+        This document has no IANA actions. The error codes of
+        <xref target="verification-errors"/> and the grant scopes of
+        <xref target="write-grants"/> are defined only within this
+        protocol; no registry is requested at this maturity.
+      </t>
+    </section>
+
+  </middle>
+
+  <back>
+
+    <references>
+      <name>References</name>
+      <references anchor="normative">
+        <name>Normative References</name>
+        <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.2104.xml"/>
+        <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.2119.xml"/>
+        <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.3986.xml"/>
+        <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.4086.xml"/>
+        <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.4648.xml"/>
+        <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.5869.xml"/>
+        <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.8174.xml"/>
+        <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.8259.xml"/>
+
+        <reference anchor="FIPS-180-4" target="https://doi.org/10.6028/NIST.FIPS.180-4">
+          <front>
+            <title>Secure Hash Standard (SHS)</title>
+            <author><organization>National Institute of Standards and Technology</organization></author>
+            <date year="2015" month="August"/>
+          </front>
+          <seriesInfo name="FIPS" value="180-4"/>
+        </reference>
+
+        <reference anchor="SP800-38D" target="https://doi.org/10.6028/NIST.SP.800-38D">
+          <front>
+            <title>Recommendation for Block Cipher Modes of Operation: Galois/Counter Mode (GCM) and GMAC</title>
+            <author><organization>National Institute of Standards and Technology</organization></author>
+            <date year="2007" month="November"/>
+          </front>
+          <seriesInfo name="NIST SP" value="800-38D"/>
+        </reference>
+
+        <reference anchor="PSL" target="https://publicsuffix.org/">
+          <front>
+            <title>Public Suffix List</title>
+            <author><organization>Mozilla Foundation</organization></author>
+            <date/>
+          </front>
+        </reference>
+      </references>
+
+      <references anchor="informative">
+        <name>Informative References</name>
+        <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.6265.xml"/>
+        <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.6973.xml"/>
+        <xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.7942.xml"/>
+
+        <reference anchor="WebCrypto" target="https://www.w3.org/TR/WebCryptoAPI/">
+          <front>
+            <title>Web Cryptography API</title>
+            <author><organization>W3C</organization></author>
+            <date year="2017" month="January"/>
+          </front>
+        </reference>
+
+        <reference anchor="ITP" target="https://webkit.org/blog/7675/intelligent-tracking-prevention/">
+          <front>
+            <title>Intelligent Tracking Prevention</title>
+            <author><organization>Apple WebKit</organization></author>
+            <date year="2017" month="June"/>
+          </front>
+        </reference>
+
+        <reference anchor="PrivacySandbox" target="https://privacysandbox.com/">
+          <front>
+            <title>The Privacy Sandbox</title>
+            <author><organization>Google</organization></author>
+            <date/>
+          </front>
+        </reference>
+
+        <reference anchor="GA-LINKER" target="https://support.google.com/analytics/answer/10071811">
+          <front>
+            <title>Set up cross-domain measurement (Google Analytics 4)</title>
+            <author><organization>Google</organization></author>
+            <date/>
+          </front>
+        </reference>
+
+        <reference anchor="ADOBE-MC" target="https://experienceleague.adobe.com/en/docs/id-service/using/id-service-api/methods/appendvisitorid">
+          <front>
+            <title>appendVisitorIDsTo (Cross-Domain Tracking), Experience Cloud Identity Service</title>
+            <author><organization>Adobe</organization></author>
+            <date/>
+          </front>
+        </reference>
+
+        <reference anchor="OWASP-XSS" target="https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html">
+          <front>
+            <title>Cross Site Scripting Prevention Cheat Sheet</title>
+            <author><organization>OWASP</organization></author>
+            <date/>
+          </front>
+        </reference>
+
+        <reference anchor="PEARG" target="https://datatracker.ietf.org/rg/pearg/about/">
+          <front>
+            <title>Privacy Enhancements and Assessments Research Group</title>
+            <author><organization>IRTF</organization></author>
+            <date/>
+          </front>
+        </reference>
+
+        <reference anchor="RWS" target="https://developers.google.com/privacy-sandbox/cookies/related-website-sets">
+          <front>
+            <title>Related Website Sets</title>
+            <author><organization>Google</organization></author>
+            <date/>
+          </front>
+        </reference>
+      </references>
+    </references>
+
+    <section anchor="changes">
+      <name>Changes from draft-01</name>
+      <t>
+        This revision aligns the specification with the reviewed
+        reference implementation and with an adversarial security
+        and privacy review of draft-01. Grouped by theme:
+      </t>
+      <section anchor="changes-token">
+        <name>Token Format and Verification</name>
+        <ul spacing="normal">
+          <li>Replaced the signed-cleartext token (Base64 JSON
+          payload plus HMAC) with the version-2 sign-then-encrypt
+          construction: HMAC-SHA256-signed canonical payload sealed
+          with AES-256-GCM under HKDF-derived per-(tenant,
+          destination) keys, with routing metadata bound as AEAD
+          associated data (<xref target="token-format"/>). Draft-01
+          tokens carried the WaiTag, domains, and timestamps
+          readable by anyone who saw the URL; version-2 envelopes
+          expose only tenant and destination routing fields.</li>
+          <li>Made the envelope version a pre-decryption gate;
+          legacy (v1/unversioned) tokens are rejected with
+          <tt>UNSUPPORTED_VERSION</tt>; removed all acceptance of
+          unsigned tokens and any fallback behavior
+          (<xref target="versioning"/>).</li>
+          <li>Specified the exact canonical payload serialization,
+          claim set (adding <tt>jti</tt>, <tt>tenantId</tt>,
+          <tt>sourceDomain</tt> as first-class signed claims),
+          constant-time comparison, clock-skew allowance, and size
+          limits (<xref target="token-payload"/>).</li>
+          <li>Published the complete ordered verification algorithm
+          with per-step error codes; the error vocabulary grew from
+          5 codes in draft-01 to 14
+          (<xref target="verification-errors"/>).</li>
+          <li>Made replay consumption explicitly atomic
+          (single-winner under concurrency) and moved it after all
+          authorization and validity checks, eliminating the
+          token-burning denial of service present in draft-01's
+          ordering (<xref target="replay"/>,
+          <xref target="sec-dos"/>).</li>
+        </ul>
+      </section>
+      <section anchor="changes-identifier">
+        <name>Identifier</name>
+        <ul spacing="normal">
+          <li>WaiTag generation changed from draft-01's
+          base-36 random-plus-timestamp with embedded domain hash to
+          substrings of a SHA-256 digest over 128 bits of CSPRNG
+          input, a timestamp, and a domain salt; no component of the
+          identifier now decodes to a timestamp or domain
+          (<xref target="waitag-generation"/>).</li>
+          <li>Removed draft-01's permitted <tt>Math.random()</tt>
+          fallback; generation now fails closed when
+          cryptographic primitives are unavailable.</li>
+        </ul>
+      </section>
+      <section anchor="changes-auth">
+        <name>Authorization</name>
+        <ul spacing="normal">
+          <li>Added write grants (<xref target="write-grants"/>):
+          all browser write paths -- ingestion, registration, and
+          verification -- now require a short-lived server-signed
+          grant; tenant identity is resolved from server-side
+          domain-to-tenant configuration. Draft-01 identified
+          tenants by a caller-supplied <tt>customerId</tt> body
+          field, which allowed cross-tenant data poisoning.</li>
+          <li>Verification now requires a grant bearing the
+          <tt>ingest</tt> scope for the destination domain and
+          re-checks that both signed domains remain authorized
+          (<tt>DOMAIN_NOT_VERIFIED</tt>); the <tt>customerId</tt>
+          body field is legacy-optional and checked for agreement
+          rather than trusted
+          (<xref target="verification-endpoint"/>).</li>
+          <li>Documented the exact response contract, including the
+          message-only HTTP 400/500 responses that carry no
+          <tt>error</tt> member
+          (<xref target="verification-errors"/>).</li>
+          <li>Issuance requires server credentials and a mandatory
+          destination binding (<xref target="issuance"/>);
+          domain-verification management endpoints require API-key
+          authentication (<xref target="dns-authorization"/>).</li>
+        </ul>
+      </section>
+      <section anchor="changes-consent">
+        <name>Consent, Storage, and User Controls</name>
+        <ul spacing="normal">
+          <li>Specified the four-state consent lifecycle with
+          <tt>withdrawn</tt> distinct from <tt>denied</tt>, a
+          fail-closed initial state, and full purge-on-withdrawal
+          semantics (<xref target="consent"/>). Removed draft-01's
+          "anonymous mode": the current protocol performs no event
+          activity of any kind outside the <tt>granted</tt> state,
+          rather than tracking with per-session random
+          identifiers.</li>
+          <li>Added the asynchronous-cancellation requirements for
+          consent races (<xref target="consent-races"/>).</li>
+          <li>Added retention: 180-day absolute and 30-day unused
+          windows enforced at read time, fail-closed for legacy
+          records (<xref target="storage-retention"/>); draft-01
+          storage had no expiry.</li>
+          <li>Added user inspection, reset, and revocation controls
+          and the restore-transparency event
+          (<xref target="user-controls"/>).</li>
+          <li>Renamed storage "encryption"/"obfuscation" honestly:
+          stored identity is encoded with client-side tamper
+          evidence, not encrypted
+          (<xref target="data-handling-terms"/>,
+          <xref target="storage-integrity"/>).</li>
+          <li>Added registrable-domain (Public Suffix List) parsing
+          for all domain comparisons, and
+          reject-rather-than-normalize input handling.</li>
+        </ul>
+      </section>
+      <section anchor="changes-claims">
+        <name>Claims, Positioning, and Analysis</name>
+        <ul spacing="normal">
+          <li>Repositioned the protocol relative to prior art: WTX-1
+          is a hardened member of the existing link-decoration
+          family (Google Analytics <tt>_gl</tt>, Adobe
+          <tt>adobe_mc</tt>), not a new capability class
+          (<xref target="prior-art"/>).</li>
+          <li>Withdrew draft-01's claim that identifiers are
+          "designed to fall outside" personal-data definitions;
+          this revision states the opposite presumption and
+          discloses <tt>identify()</tt>-style linkage
+          (<xref target="privacy-pseudonymity"/>,
+          <xref target="privacy-linkage"/>).</li>
+          <li>Removed regulatory compliance lists (GDPR, CCPA,
+          HIPAA, and similar) in favor of jurisdiction-neutral
+          language throughout.</li>
+          <li>Replaced categorical security claims ("residual risk:
+          none", "never visible") with scoped analysis, including
+          honest treatment of extensions, XSS, DNS and key
+          compromise, collusion, and consent races
+          (<xref target="security"/>).</li>
+          <li>Reframed quantitative claims: structural properties
+          remain verifiable claims; timing figures are now scoped
+          measured observations with methodology, not protocol
+          guarantees (<xref target="measurable"/>). Terminology
+          consistently says "pseudonymous" rather than
+          "anonymous".</li>
+          <li>Added the complete exchange example
+          (<xref target="example"/>), illustrative token appendix
+          (<xref target="illustrative"/>), conformance checklist
+          (<xref target="conformance"/>), deployment considerations
+          (<xref target="deployment"/>), and implementation status
+          (<xref target="impl-status"/>).</li>
+        </ul>
+      </section>
+    </section>
+
+    <section anchor="illustrative">
+      <name>Illustrative Token (Non-Normative)</name>
+      <t>
+        The values below show the structures at each stage. They are
+        placeholders for readability -- the hexadecimal and Base64
+        strings are not outputs of real keys, and this appendix is
+        not a cryptographic test vector. A verifiable vector can be
+        produced with the reference implementation by fixing the
+        token secret, <tt>jti</tt>, IV, and timestamps.
+      </t>
+      <t>Inner payload before signing (canonical member order):</t>
+      <sourcecode type="json"><![CDATA[
+{
+  "v": 2,
+  "jti": "8c9f1e2ab34cd56e78f90a1b2c3d4e5f",
+  "iat": 1787740800000,
+  "exp": 1787741100000,
+  "tenantId": "t_1001",
+  "sourceDomain": "source.example",
+  "destinationDomain": "destination.example",
+  "waiTag": "wai_9f86d081884c7d659a2fe_aa32b8b4",
+  "sessionId": "sess_c1a2b3",
+  "userId": null
+}
+]]></sourcecode>
+      <t>
+        Signature input is exactly the JSON serialization above (no
+        whitespace); the resulting <tt>sig</tt> (64 lowercase hex
+        characters) is appended as an eleventh member, and the
+        plaintext is encrypted with:
+      </t>
+      <sourcecode type="pseudocode"><![CDATA[
+encKey = HKDF-SHA256(secret, "nylo-wtx1-v2",
+                     "enc|t_1001|destination.example", 32)
+macKey = HKDF-SHA256(secret, "nylo-wtx1-v2",
+                     "mac|t_1001|destination.example", 32)
+AAD    = "WTX1|v2|t_1001|destination.example"
+]]></sourcecode>
+      <t>Envelope before Base64 wrapping:</t>
+      <sourcecode type="json"><![CDATA[
+{
+  "v": 2,
+  "tid": "t_1001",
+  "dst": "destination.example",
+  "iv": "u4hnhe0N3RB1lZnw",
+  "ct": "H1n1...opaque Base64 ciphertext...X8Q=",
+  "tag": "0T2Yebw2WQFA0mLxu+f0AA=="
+}
+]]></sourcecode>
+      <t>
+        The token string is the Base64 encoding of that JSON object
+        and rides the fragment as
+        <tt>#nylo_token=&lt;token&gt;</tt>. Note which fields an
+        observer of the URL can read: <tt>v</tt>, <tt>tid</tt>, and
+        <tt>dst</tt> only; the WaiTag, session, domains-as-signed,
+        timestamps, and user id are ciphertext.
+      </t>
+    </section>
+
+    <section anchor="comparison">
+      <name>Comparison with Related Mechanisms (Informative)</name>
+      <t>
+        The honest comparison baseline is the link-decoration family
+        WTX-1 belongs to, plus the browser-native alternatives.
+      </t>
+      <table anchor="tbl-comparison">
+        <name>Mechanism comparison</name>
+        <thead>
+          <tr>
+            <th>Property</th>
+            <th>3rd-party cookies</th>
+            <th>GA _gl / adobe_mc</th>
+            <th>Related Website Sets</th>
+            <th>WTX-1</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Cross-domain carrier</td>
+            <td>Cookie header</td>
+            <td>URL query parameter</td>
+            <td>Browser-mediated storage access</td>
+            <td>URL fragment (not sent in requests)</td>
+          </tr>
+          <tr>
+            <td>Payload confidentiality in transit URL</td>
+            <td>n/a</td>
+            <td>Encoded, readable</td>
+            <td>n/a</td>
+            <td>Encrypted; routing metadata only</td>
+          </tr>
+          <tr>
+            <td>Destination binding / single use</td>
+            <td>No</td>
+            <td>No (time-window checks only)</td>
+            <td>Browser-enforced set membership</td>
+            <td>Cryptographic binding; atomic single use</td>
+          </tr>
+          <tr>
+            <td>Consent-gated by design</td>
+            <td>No (policy overlay)</td>
+            <td>No (policy overlay)</td>
+            <td>No (set-level, not user-level)</td>
+            <td>Yes; fail-closed default off</td>
+          </tr>
+          <tr>
+            <td>Participant set auditable</td>
+            <td>No</td>
+            <td>No</td>
+            <td>Yes (published sets)</td>
+            <td>Yes (DNS records + server config)</td>
+          </tr>
+          <tr>
+            <td>Browser-enforced guarantees</td>
+            <td>Being removed</td>
+            <td>None</td>
+            <td>Yes</td>
+            <td>None (application layer)</td>
+          </tr>
+        </tbody>
+      </table>
+      <t>
+        The last row is the important caveat: WTX-1's properties are
+        application-layer contracts between the participating
+        deployment's components, verifiable by inspection and test,
+        but not enforced by the user agent. Browser-native
+        mechanisms (Related Website Sets <xref target="RWS"/>,
+        storage access APIs)
+        provide weaker linkage with stronger enforcement; WTX-1
+        provides stronger controls with no enforcement beyond the
+        deployment itself. Which is preferable is a policy question
+        this document does not decide.
+      </t>
+    </section>
+
+    <section anchor="acknowledgments" numbered="false">
+      <name>Acknowledgments</name>
+      <t>
+        This revision owes its shape to an extensive adversarial
+        security and privacy review of draft-01 and the reference
+        implementation, which identified the cleartext-token
+        exposure, the tenant-spoofing and token-burning issues, the
+        overstated anonymity and compliance claims, and the
+        storage-terminology inaccuracies corrected here. The author
+        thanks the reviewers and the implementers of the test suite
+        that now guards these behaviors.
+      </t>
+    </section>
+
+  </back>
+</rfc>

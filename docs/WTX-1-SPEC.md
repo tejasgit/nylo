@@ -379,7 +379,7 @@ The verification server MUST check, in order:
 | `INVALID_SIGNATURE` | Decryption or HMAC signature verification failed (covers ciphertext, IV, tag, routing and payload tampering, and wrong-key attempts) |
 | `INVALID_IAT` | Token is future-dated beyond clock skew |
 | `DOMAIN_MISMATCH` | Token destination does not match the requesting destination |
-| `DOMAIN_NOT_AUTHORIZED` | Destination domain is not DNS-authorized |
+| `DOMAIN_NOT_VERIFIED` | Source or destination domain is not DNS-verified for the token's tenant |
 | `ORIGIN_MISMATCH` | Token origin does not match the requesting domain's referrer |
 | `GRANT_REQUIRED` | No write grant accompanied the verification request (401) |
 | `GRANT_DOMAIN_MISMATCH` | The write grant was issued for a different domain than requested |
