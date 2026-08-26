@@ -110,38 +110,37 @@ A SaaS company runs experiments that span their marketing site and product appli
 
 ### WaiTag Identifiers
 
-A WaiTag is a pseudonymous identifier generated client-side:
+A WaiTag is a pseudonymous identifier generated client-side by hashing random entropy with a timestamp and a domain-specific salt:
 
 ```
-wai_[timestamp-hex]_[random-hex]_[checksum]
+digest = SHA-256(random | timestamp | domain_salt)
+wai_[digest-hex 19 chars]_[digest-hex 8 chars]
 ```
 
 **Generation requirements:**
-- Random component MUST use `crypto.getRandomValues()` (Web Cryptography API)
-- Minimum 128 bits of entropy in the random component
+- Random input MUST use `crypto.getRandomValues()` (Web Cryptography API) with at least 128 bits of entropy; the digest MUST be computed with `crypto.subtle.digest`
+- Only digest fragments form the identifier — no readable timestamp, domain marker, or other structure is exposed
 - No direct identifiers, device signals, or derivable real-world identity encoded (the identifier remains pseudonymous personal data)
 - Stored in `localStorage` (primary), with `sessionStorage` and cookie fallbacks
+- If the Web Crypto API is unavailable, generation MUST fail closed (no predictable fallback)
 
-**Example:** `wai_18d4f2a1b3c_a7f2e9d1c4b8_3k`
+**Example:** `wai_3f9c2ab81de04c57a6b_9e12f0d4`
 
 ### DNS Domain Authorization
 
-Domains must publish a DNS TXT record to participate in cross-domain identity sharing:
+Domain owners must prove ownership via a DNS TXT record before their domains can participate in cross-domain identity sharing. The verification server issues a per-domain token, and the owner publishes it:
 
 ```
-_nylo.example.com TXT "v=nylo1; domains=blog.example.com,shop.example.com; key=abc123"
+_nylo-verify.example.com TXT "nylo-verify=<verification-token>"
 ```
 
-**Fields:**
-- `v=nylo1` — Protocol version
-- `domains=` — Comma-separated list of authorized peer domains
-- `key=` — Shared key identifier for token verification
+Verification management endpoints (`request-verification`, `verify`, `status`) are authenticated with the customer's API key; the server then checks the TXT record and stores the verified status. Cross-domain token verification consults this verified-domain registry.
 
 **Properties:**
 - Only the domain administrator can create DNS TXT records
-- Authorization is explicit and enumerated (no wildcards)
-- Records can be revoked by removing the TXT record
-- Subdomain inheritance: a record on `example.com` covers `*.example.com`
+- Authorization is explicit and per-domain (no wildcards); unverified destination domains are refused cross-domain identity (`403`)
+- Verification can be revoked by removing the TXT record; the server re-checks periodically
+- Subdomain inheritance: a verified `example.com` covers its subdomains (the server first checks the subdomain's own record, then falls back to the parent)
 
 ### Token Transport via Hash Fragments
 
@@ -160,7 +159,7 @@ https://shop.example.com/product/123#nylo_token=eyJ3...
 
 ### Token Verification
 
-Tokens are HMAC-SHA256 signed and contain:
+Tokens are **signed and encrypted** (sign-then-encrypt): an HMAC-SHA256-signed payload sealed with AES-256-GCM under keys derived per tenant and destination domain (HKDF-SHA256). Observers of the URL see only ciphertext plus routing metadata. The encrypted payload contains:
 
 | Field | Description |
 |---|---|
@@ -168,12 +167,15 @@ Tokens are HMAC-SHA256 signed and contain:
 | `sessionId` | Current session identifier |
 | `userId` | Optional application-level identifier (may constitute personal data; requires lawful basis if used) |
 | `sourceDomain` | The originating domain |
+| `destinationDomain` | The intended recipient domain (key-bound) |
 | `exp` | Expiration timestamp (default: 5 minutes) |
 | `sig` | HMAC-SHA256 signature |
 
 **Verification requirements:**
+- Token MUST be format v2 (encrypted); legacy cleartext tokens MUST be rejected
+- Token MUST decrypt under the key derived from its routing metadata (AEAD integrity)
+- Signature MUST be valid and agree with the routing metadata
 - Token MUST NOT be expired
-- Signature MUST be valid
 - Source domain MUST be in the destination's DNS-authorized domain list
 - Replay protection: each token MUST only be accepted once
 
@@ -204,7 +206,7 @@ nylo.hasConsent();
 
 ```
 1. User visits blog.example.com, consents to analytics
-2. Nylo SDK generates WaiTag: wai_18d4f2a1b3c_a7f2e9d1c4b8_3k
+2. Nylo SDK generates WaiTag: wai_3f9c2ab81de04c57a6b_9e12f0d4
 3. User clicks link to shop.example.com
 4. SDK checks DNS authorization: blog.example.com ↔ shop.example.com ✓
 5. SDK appends token to URL hash fragment
@@ -290,7 +292,7 @@ WTX-1 intentionally does not propose a new browser API because:
 |---|---|
 | Token interception by destination server | Hash fragment transport (not sent in HTTP requests) |
 | Token replay | One-time-use verification with server-side nonce tracking |
-| Token tampering | HMAC-SHA256 signature verification |
+| Token tampering | AES-256-GCM authenticated encryption + inner HMAC-SHA256 signature verification |
 | Token expiration bypass | Server-side timestamp validation (default 5 min) |
 | Unauthorized domain participation | DNS TXT record verification |
 | Referrer header leakage | Recommended `Referrer-Policy: no-referrer` header |
@@ -346,7 +348,7 @@ Implementations SHOULD provide users with:
 
 3. **Referrer leakage:** While modern browsers generally do not include hash fragments in `Referer` headers, implementations SHOULD set `Referrer-Policy: no-referrer` or `Referrer-Policy: same-origin` to mitigate edge cases.
 
-4. **Long-lived identifiers:** WaiTags stored in `localStorage` persist until explicitly cleared. Implementations SHOULD implement rotation policies (e.g., regenerate WaiTag every 90 days) to limit the window of potential correlation.
+4. **Long-lived identifiers:** Stored WaiTags are time-limited: the reference implementation automatically expires them 180 days after creation, or after 30 days without use (both configurable), enforced on every read — expired identifiers are deleted and replaced with fresh, unlinked ones. Users can additionally view, reset, or revoke their stored context at any time. Implementations MAY rotate identifiers more aggressively to further limit the correlation window.
 
 5. **Query parameter opt-in:** If an implementor enables query parameter token transport (disabled by default), tokens become visible to the destination server in HTTP request logs. Implementors who enable this option SHOULD ensure server-side log redaction of token parameters.
 
@@ -410,7 +412,7 @@ Beyond the token security model described above, implementors should consider:
 
 3. **DNS spoofing:** DNS TXT record verification is subject to DNS spoofing attacks. Implementations SHOULD use DNSSEC where available and MUST validate DNS responses over secure channels.
 
-4. **Server-side key management:** The shared HMAC key used for token signing must be stored securely on participating servers. Key rotation policies SHOULD be implemented.
+4. **Server-side key management:** The server-side token secret — from which per-tenant, per-destination encryption and MAC keys are derived via HKDF-SHA256 — must be stored securely on participating servers. Key rotation policies SHOULD be implemented.
 
 5. **Rate limiting:** Verification endpoints SHOULD implement rate limiting to prevent token brute-force attacks and denial-of-service.
 

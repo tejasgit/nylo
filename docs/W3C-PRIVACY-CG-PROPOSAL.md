@@ -33,7 +33,7 @@ WTX-1 (WaiTag Transfer Protocol, version 1) is a protocol for preserving pseudon
 
 3. **Hash fragment token transport:** When navigating between authorized domains, a short-lived token (default: 5 minutes) is appended to the URL hash fragment. Hash fragments are *not* sent to servers in HTTP requests ([RFC 3986 §3.5](https://www.rfc-editor.org/rfc/rfc3986#section-3.5)), so the destination server never sees the token passively. The client reads the fragment, sends it to a verification endpoint via a dedicated API call, and cleans up the URL.
 
-4. **Cryptographic verification:** Tokens are HMAC-signed and verified server-side. Expired, replayed, or tampered tokens are rejected.
+4. **Cryptographic verification:** Tokens are HMAC-signed and AES-256-GCM encrypted (per-tenant, per-destination keys), then verified server-side. Expired, replayed, tampered, or unencrypted legacy tokens are rejected.
 
 5. **Consent-gated degradation:** When consent is denied, the protocol degrades to fully anonymous mode — no tokens are generated, no cross-domain context is preserved, and only aggregate analytics are collected.
 

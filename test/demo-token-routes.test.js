@@ -81,21 +81,31 @@ test('verification without a write grant is rejected and does NOT consume the to
   assert.strictEqual(legit.status, 200, JSON.stringify(legit.body));
 });
 
-test('legacy-shaped token (no version/jti/iat/bindings) is rejected', async () => {
+test('legacy cleartext token (no version envelope) is rejected at the version gate', async () => {
   const legacy = Buffer.from(JSON.stringify({
     waiTag: CLAIMS.waiTag, sessionId: CLAIMS.sessionId, userId: null,
     domain: 'dest.example.com', exp: Date.now() + 60000, sig: 'ab'.repeat(32)
   })).toString('base64');
   const r = await verify({ token: legacy, domain: 'dest.example.com' });
   assert.strictEqual(r.status, 403);
-  assert.strictEqual(r.body.error, 'MISSING_CLAIMS');
+  assert.strictEqual(r.body.error, 'UNSUPPORTED_VERSION');
 });
 
-test('unsigned token is rejected', async () => {
+test('legacy v1 signed-cleartext token is rejected at the version gate', async () => {
   const unsigned = Buffer.from(JSON.stringify({
     ...CLAIMS, v: 1, jti: 'x'.repeat(16), iat: Date.now(), exp: Date.now() + 60000
   })).toString('base64');
   const r = await verify({ token: unsigned, domain: 'dest.example.com' });
+  assert.strictEqual(r.status, 403);
+  assert.strictEqual(r.body.error, 'UNSUPPORTED_VERSION');
+});
+
+test('v2 envelope without an auth tag is rejected as unsigned', async () => {
+  const valid = signCrossDomainToken(CLAIMS, SECRET);
+  const envelope = JSON.parse(Buffer.from(valid, 'base64').toString('utf-8'));
+  delete envelope.tag;
+  const stripped = Buffer.from(JSON.stringify(envelope)).toString('base64');
+  const r = await verify({ token: stripped, domain: 'dest.example.com' });
   assert.strictEqual(r.status, 403);
   assert.strictEqual(r.body.error, 'MISSING_SIGNATURE');
 });

@@ -53,7 +53,8 @@ Nylo implements the following security measures:
 - Stored identity is reversibly **encoded** (not encrypted) with an HMAC-SHA256 integrity check as local tamper evidence — the browser-side HMAC is not authentication, and the server never trusts it
 
 ### Cross-Domain Token Security
-- Tokens are HMAC-SHA256 signed, versioned, single-use (`jti` + replay store), and bound to tenant + destination domain
+- Cross-domain tokens (WTX-1 token format v2) are **sign-then-encrypt**: the payload is HMAC-SHA256 signed, then sealed with AES-256-GCM under keys independently derived per tenant + destination domain (HKDF-SHA256) — token contents (WaiTag, session, source domain) are confidential in transit
+- Tokens are versioned, single-use (`jti` + replay store), and bound to tenant + destination domain; the cleartext envelope carries only routing metadata (tenant ID, destination domain), which is AEAD-authenticated and cross-checked against the signed payload. Legacy v1 signed-cleartext tokens are rejected
 - Tokens expire after 5 minutes
 - Verification is authorized (write grant for the destination) **before** the token is consumed, so unauthenticated callers cannot burn tokens
 - Replay consumption is atomic; production requires a durable, shared replay store and refuses to start without one
@@ -65,6 +66,7 @@ Nylo implements the following security measures:
 - URLs are reduced to origin + path before transmission and storage; query strings and fragments are discarded unless individually allowlisted
 - No third-party cookies are used; a **first-party cookie (`nylo_wai`)** is set for local identity persistence once consent is granted
 - Identifiers (WaiTags) are **pseudonymous, not anonymous** — they are personal data under GDPR-style regimes, and `Nylo.identify()` can link them to an application-level user ID
+- Stored identifiers are **time-limited**: they expire automatically 180 days after creation, or after 30 days without use (both configurable, enforced on every read — expired records are deleted, never resurrected). Users can view, reset, or revoke their stored context via the public `getStoredContext()` / `resetContext()` / `revokeContext()` APIs
 - Fail-closed consent gating: no tracking, storage, or cross-domain sync occurs before `Nylo.setConsent({ analytics: true })`
 - Consent withdrawal aborts in-flight requests, cancels retry timers, invalidates cached grants, and purges queues and storage
 - Three-layer storage (first-party cookie, localStorage, sessionStorage) with graceful degradation

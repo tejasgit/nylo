@@ -16,21 +16,21 @@ export function generateSecureId(length: number = 16): string {
   return crypto.randomBytes(length).toString('hex');
 }
 
-export function generateWaiTagId(): string {
+/**
+ * WaiTag derivation: SHA-256 over (CSPRNG random value | timestamp |
+ * domain-specific salt). The digest — not the raw inputs — becomes the
+ * identifier, so the tag embeds no readable timestamp and no reversible
+ * domain marker. Mirrors the browser SDK derivation in src/nylo.js.
+ */
+export function generateWaiTagId(domain: string = 'server'): string {
+  const randomHex = generateSecureId(16); // 128 bits of CSPRNG entropy
   const timestamp = Date.now().toString();
-  const randomId = generateSecureId(8);
-  const prefix = generateRandomPrefix(8);
-  return `${prefix}-${timestamp}-${randomId}`;
-}
-
-function generateRandomPrefix(length: number = 8): string {
-  const chars = 'abcdefghijklmnopqrstuvwxyz';
-  let result = '';
-  const bytes = crypto.randomBytes(length);
-  for (let i = 0; i < length; i++) {
-    result += chars.charAt(bytes[i] % chars.length);
-  }
-  return result;
+  const salt = `nylo:${String(domain).toLowerCase()}`;
+  const digest = crypto
+    .createHash('sha256')
+    .update(`${randomHex}|${timestamp}|${salt}`)
+    .digest('hex');
+  return `wai_${digest.slice(0, 19)}_${digest.slice(19, 27)}`;
 }
 
 export function generateSessionId(): string {

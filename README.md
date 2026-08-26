@@ -49,7 +49,7 @@ User visits site-a.com        User clicks to site-b.com
    No direct identifiers. No login. No third-party cookies.
 ```
 
-The SDK generates a **WaiTag** -- a pseudonymous identifier built from a timestamp, cryptographic random bytes, and a one-way domain hash. No personal information is used as an input, and the identifier cannot on its own be reverse-engineered to a person. It is **pseudonymous, not anonymous**: it persists across sessions (via a first-party cookie, localStorage, and sessionStorage), and if you call `Nylo.identify()` it becomes linked to your application-level user ID. When a user navigates between your domains, a secure token exchange preserves the identifier so you get unified analytics across properties.
+The SDK generates a **WaiTag** -- a pseudonymous identifier derived by hashing (SHA-256) a 128-bit cryptographically random value together with a timestamp and a domain-specific salt. Only the digest becomes the identifier — it embeds no readable timestamp and no reversible domain marker, and no personal information is used as an input, so the identifier cannot on its own be reverse-engineered to a person. It is **pseudonymous, not anonymous**: it persists across sessions (via a first-party cookie, localStorage, and sessionStorage), and if you call `Nylo.identify()` it becomes linked to your application-level user ID. When a user navigates between your domains, a secure token exchange preserves the identifier so you get unified analytics across properties.
 
 ## Quick Start
 
@@ -88,7 +88,22 @@ Nylo.getMetrics();
 
 Nylo.getFeatures();
 
+// Privacy controls — expose these to your users:
+Nylo.getStoredContext();  // view everything stored in this browser, incl. expiry
+Nylo.resetContext();      // delete stored identity, mint a fresh unlinked one
+Nylo.revokeContext();     // withdraw consent: stop tracking, purge all data
+
 Nylo.destroy();
+```
+
+The SDK also dispatches a `nyloContextPreserved` event on `window` whenever
+context is restored (from first-party storage or across domains), so pages can
+show users a visible context-continuity indicator:
+
+```javascript
+window.addEventListener('nyloContextPreserved', (e) => {
+  // e.detail: { source: 'first_party_storage' | 'cross_domain', waiTag, preservedAt, ... }
+});
 ```
 
 ### 3. Set up the server
@@ -152,7 +167,7 @@ npx tsx examples/server.ts
 | Performance | Page load timing, element visibility |
 | Engagement | Bounce rate, return visitors, user engagement |
 | Conversion | Custom conversions with value tracking |
-| Identity | Cross-domain sync, device info, browser info |
+| Identity | Cross-domain sync, return visitors |
 
 ## Architecture
 
@@ -208,6 +223,7 @@ The WaiTag identifier is **pseudonymous** and satisfies four structural properti
 2. **Non-reversibility by default** -- Nylo maintains no server-side mapping to a personal identity. Calling `Nylo.identify()` creates such a linkage; disclose it and secure a lawful basis before using it.
 3. **Behavioral consistency** -- Persists across sessions via a three-layer storage hierarchy (first-party cookie `nylo_wai`, localStorage, sessionStorage). Because it persists and singles out a browser, it is personal data under GDPR-style regimes.
 4. **Unilateral deletion** -- Clearing browser storage destroys the identifier. No server coordination needed.
+5. **Time-limited by default** -- Stored identifiers expire automatically: 180 days after creation, or after 30 days without use (both configurable). Expired records are deleted on read, never resurrected. Users can inspect (`getStoredContext()`), reset (`resetContext()`), or revoke (`revokeContext()`) their stored context at any time.
 
 No IP addresses are stored. No user agents, languages, timezones, screen/viewport dimensions, or click coordinates are collected — fingerprint-capable fields are absent from the SDK's payloads and additionally stripped server-side as defense in depth. URLs are reduced to origin + path before transmission and storage; query strings and fragments (which routinely carry tokens, emails, and search terms) are discarded unless a parameter is explicitly allowlisted. All strings are sanitized and length-limited. Nylo does not reduce your consent obligations — obtain consent where the law requires it; the SDK will not track until you signal consent via `Nylo.setConsent()`.
 
@@ -221,22 +237,25 @@ Nylo uses DNS TXT records to verify domain ownership before allowing cross-domai
 
 ### How It Works
 
+All three endpoints authenticate with your API key (`X-API-Key` header).
+Customer IDs in a request body are never accepted as authentication.
+
 ```
 1. Request verification token
-   POST /api/domains/request-verification
-   { "domain": "example.com", "customerId": 1 }
+   POST /api/domains/request-verification    (X-API-Key: <your key>)
+   { "domain": "example.com" }
    → { "token": "a1b2c3...", "dnsRecord": { "type": "TXT", "value": "nylo-verify=a1b2c3..." } }
 
 2. Add TXT record to your DNS
    example.com  TXT  "nylo-verify=a1b2c3..."
 
 3. Trigger verification
-   POST /api/domains/verify
-   { "domain": "example.com", "customerId": 1 }
+   POST /api/domains/verify                  (X-API-Key: <your key>)
+   { "domain": "example.com" }
    → { "status": "verified", "method": "direct_txt" }
 
 4. Check status anytime
-   GET /api/domains/status?domain=example.com&customerId=1
+   GET /api/domains/status?domain=example.com   (X-API-Key: <your key>)
    → { "status": "verified", "verifiedAt": "2026-02-17T..." }
 ```
 
@@ -257,7 +276,7 @@ To track users across `site-a.com` and `site-b.com`:
 3. Configure the domain allowlist in your encrypted configuration
 4. The SDK handles token exchange automatically when users navigate between domains
 
-The token exchange uses URL parameters (primary) or `postMessage` (iframe fallback). Tokens expire after 5 minutes. All exchanges are audit-logged.
+Tokens travel in the URL **hash fragment** (never sent to servers or logged; query-parameter transport is a separate explicit opt-in). Each token is encrypted **and** signed (WTX-1 token format v2: HMAC-SHA256 signature sealed inside AES-256-GCM, keys derived per tenant + destination domain), expires after 5 minutes, and is single-use.
 
 ## Configuration
 
@@ -271,6 +290,10 @@ The token exchange uses URL parameters (primary) or `postMessage` (iframe fallba
 | `data-security` | No | Encrypted domain authorization allowlist |
 | `data-debug` | No | Enable console logging (`"true"` / `"false"`) |
 | `data-embed-id` | No | Embed identifier for multi-instance deployments |
+| `data-allowed-params` | No | Comma-separated allowlist of query parameters to collect (everything else never leaves the browser) |
+| `data-allow-query-params` | No | Opt in to query-parameter token transport (`"true"`; default is hash-fragment only) |
+| `data-identity-max-age-days` | No | Absolute lifetime of a stored identifier in days (default `180`, max `3650`) |
+| `data-identity-unused-expiry-days` | No | Days without use before a stored identifier expires (default `30`, max `3650`) |
 
 ### Batch Settings
 

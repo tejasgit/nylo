@@ -133,7 +133,7 @@ export function registerWaiTagTrackingRoutes(app: any, storage: WaiTagStorage) {
       // registered.
       let validWaiTag: string;
       if (body.waiTag === undefined || body.waiTag === null || body.waiTag === '') {
-        validWaiTag = generateWaiTagId();
+        validWaiTag = generateWaiTagId(grant.domain);
       } else {
         try {
           validWaiTag = validateWaiTagId(String(body.waiTag));

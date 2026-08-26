@@ -353,3 +353,100 @@ test('production startup fails closed without durable replay storage and domain�
     process.env.NODE_ENV = prevEnv;
   }
 });
+
+// ---- DNS domain-verification endpoints: API-key-only tenant identity ----
+
+function makeDnsStorage() {
+  const created = [];
+  const lookups = [];
+  const storage = makeStorage({
+    getCustomerByApiKey: async (key) => (key === 'valid-key' ? { id: 7 } : null),
+    getDomainVerification: async (domain, customerId) => { lookups.push([domain, customerId]); return null; },
+    createDomainVerification: async (d) => { created.push(d); return Object.assign({ id: 1 }, d); },
+    updateDomainVerification: async () => ({})
+  });
+  return { storage, created, lookups };
+}
+
+test('domain endpoints require an API key — customer IDs are never accepted as authentication', async () => {
+  const { server, baseUrl } = await startServer(makeDnsStorage().storage);
+  try {
+    // request-verification: no key → 401, even with a customerId in the body
+    let res = await fetch(baseUrl + '/api/domains/request-verification', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ domain: 'example.com', customerId: 7 })
+    });
+    assert.strictEqual(res.status, 401);
+    assert.strictEqual((await res.json()).error, 'API_KEY_REQUIRED');
+
+    // verify: no key → 401
+    res = await fetch(baseUrl + '/api/domains/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ domain: 'example.com', customerId: 7 })
+    });
+    assert.strictEqual(res.status, 401);
+    assert.strictEqual((await res.json()).error, 'API_KEY_REQUIRED');
+
+    // status: no key → 401 (query customerId ignored)
+    res = await fetch(baseUrl + '/api/domains/status?domain=example.com&customerId=7');
+    assert.strictEqual(res.status, 401);
+    assert.strictEqual((await res.json()).error, 'API_KEY_REQUIRED');
+
+    // unknown key → 403
+    res = await fetch(baseUrl + '/api/domains/request-verification', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': 'wrong-key' },
+      body: JSON.stringify({ domain: 'example.com' })
+    });
+    assert.strictEqual(res.status, 403);
+    assert.strictEqual((await res.json()).error, 'INVALID_API_KEY');
+  } finally {
+    server.close();
+  }
+});
+
+test('authenticated customer can request domain verification; tenant is derived from the key', async () => {
+  const dns = makeDnsStorage();
+  const { server, baseUrl } = await startServer(dns.storage);
+  try {
+    const res = await fetch(baseUrl + '/api/domains/request-verification', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': 'valid-key' },
+      // A conflicting customerId in the body must have no effect on tenant identity.
+      body: JSON.stringify({ domain: 'example.com', customerId: 999 })
+    });
+    const body = await res.json();
+    assert.strictEqual(res.status, 200, JSON.stringify(body));
+    assert.strictEqual(body.success, true);
+    assert.strictEqual(body.domain, 'example.com');
+    // The verification record must be created for the API-key tenant (7),
+    // never the caller-supplied body customerId (999).
+    assert.strictEqual(dns.created.length, 1);
+    assert.strictEqual(dns.created[0].customerId, 7);
+    assert.strictEqual(dns.created[0].domain, 'example.com');
+  } finally {
+    server.close();
+  }
+});
+
+test('status lookups are scoped to the API-key tenant, ignoring query customerId', async () => {
+  const dns = makeDnsStorage();
+  const { server, baseUrl } = await startServer(dns.storage);
+  try {
+    const res = await fetch(baseUrl + '/api/domains/status?domain=example.com&customerId=999', {
+      headers: { 'X-API-Key': 'valid-key' }
+    });
+    assert.notStrictEqual(res.status, 401);
+    assert.notStrictEqual(res.status, 403);
+    // Every storage lookup must use the tenant from the API key (7), not 999.
+    assert.ok(dns.lookups.length >= 1, 'expected at least one verification lookup');
+    for (const [domain, customerId] of dns.lookups) {
+      assert.strictEqual(domain, 'example.com');
+      assert.strictEqual(customerId, 7);
+    }
+  } finally {
+    server.close();
+  }
+});

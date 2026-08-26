@@ -35,7 +35,7 @@ WTX-1 (WaiTag Transfer Protocol, version 1) preserves pseudonymous visitor conte
 
 **Core components:**
 
-1. **WaiTag identifiers** — Pseudonymous identifiers generated client-side using `crypto.getRandomValues()` with 128 bits of cryptographic entropy. Format: `wai_<random>_<domain_hash>`. No direct identifiers, device signals, or derivable real-world identity is encoded; the identifier is pseudonymous, not anonymous.
+1. **WaiTag identifiers** — Pseudonymous identifiers generated client-side by hashing (SHA-256) 128 bits of `crypto.getRandomValues()` entropy with a timestamp and a domain-specific salt. Format: `wai_<digest_hex[0:19]>_<digest_hex[19:27]>` — only digest fragments form the identifier, so no timestamp or domain marker is readable from it. No direct identifiers, device signals, or derivable real-world identity is encoded; the identifier is pseudonymous, not anonymous.
 
 2. **DNS domain authorization** — Participating domains must publish DNS TXT records to authorize cross-domain identity sharing. Only explicitly authorized domain pairs can exchange tokens.
 
@@ -43,7 +43,7 @@ WTX-1 (WaiTag Transfer Protocol, version 1) preserves pseudonymous visitor conte
 
 4. **Early-cleanup script** — An inline `<head>` script executes before any other page scripts, extracts the token from the hash fragment, stashes it in a short-lived JavaScript variable, and immediately cleans the URL via `history.replaceState()`. This reduces the token visibility window to sub-millisecond durations.
 
-5. **One-time-use verification** — Tokens are HMAC-SHA256 signed, expire after a configurable window (default: 5 minutes), and are accepted exactly once by the verification server (nonce-based replay protection).
+5. **One-time-use verification** — Tokens are HMAC-SHA256 signed and AES-256-GCM encrypted (keys derived per tenant and destination domain via HKDF-SHA256, so contents are confidential in transit), expire after a configurable window (default: 5 minutes), and are accepted exactly once by the verification server (nonce-based replay protection).
 
 6. **Consent-gated degradation** — When user consent is denied, no identifiers are generated, no tokens are created, and the SDK operates in a fully anonymous mode.
 
@@ -74,9 +74,9 @@ A key contribution of this work is defining quantifiable, independently reproduc
 
 ### 3.3 Token Entropy
 
-Each WaiTag contains 128 bits of cryptographic entropy sourced from `crypto.getRandomValues(new Uint8Array(16))`. Collision probability for 1 billion identifiers: ~1.47 x 10^-21.
+Each WaiTag is derived from 128 bits of cryptographic entropy sourced from `crypto.getRandomValues(new Uint8Array(16))`, hashed (SHA-256) with a timestamp and domain salt; the identifier exposes 108 bits (27 hex characters) of the digest. Collision probability for 1 billion identifiers: ~1.5 x 10^-15.
 
-**Methodology:** Generate 10,000 WaiTags, verify no collisions, extract random components and verify uniform distribution.
+**Methodology:** Generate 10,000 WaiTags, verify no collisions, verify the `wai_[0-9a-f]{19}_[0-9a-f]{8}` format and uniform distribution across the hex character space, and verify no substring decodes to a timestamp.
 
 ### 3.4 Replay Attack Surface
 

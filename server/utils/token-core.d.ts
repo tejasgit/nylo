@@ -1,4 +1,12 @@
 // SPDX-License-Identifier: LicenseRef-Nylo-Commercial
+//
+// WTX-1 token format v2 (sign-then-encrypt):
+// signCrossDomainToken() HMAC-SHA256-signs a canonical payload, then seals it
+// with AES-256-GCM under keys derived per (tenantId, destinationDomain) via
+// HKDF-SHA256 from the server secret. The returned string is a base64 envelope
+// exposing only routing metadata (v, tid, dst, iv, ct, tag).
+// verifyCrossDomainToken() rejects legacy cleartext tokens (UNSUPPORTED_VERSION)
+// and returns the decrypted payload only after AEAD + signature + binding checks.
 export const TOKEN_VERSION: number;
 export const DEFAULT_TTL_MS: number;
 

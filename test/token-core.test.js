@@ -18,6 +18,14 @@ const CLAIMS = {
   sessionId: 'session-1'
 };
 
+function decodeEnvelope(token) {
+  return JSON.parse(Buffer.from(token, 'base64').toString('utf-8'));
+}
+
+function encodeEnvelope(envelope) {
+  return Buffer.from(JSON.stringify(envelope)).toString('base64');
+}
+
 test('sign + verify roundtrip includes version, jti, iat, exp and bindings', () => {
   const token = signCrossDomainToken(CLAIMS, SECRET);
   const result = verifyCrossDomainToken(token, SECRET);
@@ -30,6 +38,7 @@ test('sign + verify roundtrip includes version, jti, iat, exp and bindings', () 
   assert.strictEqual(p.tenantId, '42');
   assert.strictEqual(p.sourceDomain, 'source.example.com');
   assert.strictEqual(p.destinationDomain, 'dest.example.com');
+  assert.strictEqual(p.waiTag, CLAIMS.waiTag);
 });
 
 test('signing requires tenant, source and destination', () => {
@@ -40,30 +49,77 @@ test('signing requires tenant, source and destination', () => {
   }
 });
 
-test('tampered payload is rejected', () => {
+test('token is encrypted: no identity or context readable in transit', () => {
   const token = signCrossDomainToken(CLAIMS, SECRET);
-  const parsed = JSON.parse(Buffer.from(token, 'base64').toString('utf-8'));
-  parsed.waiTag = 'wai_forged000000_zzz';
-  const forged = Buffer.from(JSON.stringify(parsed)).toString('base64');
-  assert.strictEqual(verifyCrossDomainToken(forged, SECRET).error, 'INVALID_SIGNATURE');
+  const decoded = Buffer.from(token, 'base64').toString('utf-8');
+  // The envelope may expose routing metadata (tenant, destination) needed
+  // for key derivation — but never identity or source context.
+  assert.ok(!decoded.includes(CLAIMS.waiTag), 'waiTag must not appear in cleartext');
+  assert.ok(!decoded.includes(CLAIMS.sessionId), 'sessionId must not appear in cleartext');
+  assert.ok(!decoded.includes(CLAIMS.sourceDomain), 'sourceDomain must not appear in cleartext');
+  assert.ok(!decoded.includes('"waiTag"'), 'no identity field names in cleartext');
+  const envelope = decodeEnvelope(token);
+  assert.deepStrictEqual(Object.keys(envelope).sort(), ['ct', 'dst', 'iv', 'tag', 'tid'].concat(['v']).sort());
 });
 
-test('unsigned token is rejected', () => {
-  const unsigned = Buffer.from(JSON.stringify({ ...CLAIMS, v: 1, jti: 'x', iat: Date.now(), exp: Date.now() + 1000 })).toString('base64');
-  assert.strictEqual(verifyCrossDomainToken(unsigned, SECRET).error, 'MISSING_SIGNATURE');
+test('tampered ciphertext is rejected', () => {
+  const token = signCrossDomainToken(CLAIMS, SECRET);
+  const envelope = decodeEnvelope(token);
+  const ct = Buffer.from(envelope.ct, 'base64');
+  ct[0] = ct[0] ^ 0xff;
+  envelope.ct = ct.toString('base64');
+  assert.strictEqual(verifyCrossDomainToken(encodeEnvelope(envelope), SECRET).error, 'INVALID_SIGNATURE');
+});
+
+test('spoofed envelope routing cannot redirect a token', () => {
+  // Attacker rewrites the cleartext destination to make a token look like
+  // it was minted for another domain: key derivation + AAD binding fail.
+  const token = signCrossDomainToken(CLAIMS, SECRET);
+  const envelope = decodeEnvelope(token);
+  envelope.dst = 'attacker.example.com';
+  const forged = encodeEnvelope(envelope);
+  assert.strictEqual(
+    verifyCrossDomainToken(forged, SECRET, { expectedDestination: 'attacker.example.com' }).error,
+    'INVALID_SIGNATURE'
+  );
+});
+
+test('tokens for different destinations use different keys (ciphertext swap fails)', () => {
+  const tokenA = signCrossDomainToken(CLAIMS, SECRET);
+  const tokenB = signCrossDomainToken({ ...CLAIMS, destinationDomain: 'other.example.com' }, SECRET);
+  const envA = decodeEnvelope(tokenA);
+  const envB = decodeEnvelope(tokenB);
+  // Graft A's encrypted payload into B's envelope: decryption keys differ.
+  const graft = { ...envB, ct: envA.ct, iv: envA.iv, tag: envA.tag };
+  assert.strictEqual(verifyCrossDomainToken(encodeEnvelope(graft), SECRET).error, 'INVALID_SIGNATURE');
+});
+
+test('envelope without auth tag is rejected', () => {
+  const envelope = decodeEnvelope(signCrossDomainToken(CLAIMS, SECRET));
+  delete envelope.tag;
+  assert.strictEqual(verifyCrossDomainToken(encodeEnvelope(envelope), SECRET).error, 'MISSING_SIGNATURE');
 });
 
 test('malformed token is rejected', () => {
   assert.strictEqual(verifyCrossDomainToken('not-base64-json', SECRET).error, 'MALFORMED_TOKEN');
 });
 
-test('legacy token without new claims is rejected', () => {
-  // old format: no v/jti/iat/tenantId/sourceDomain
+test('legacy v1 signed-cleartext token is rejected', () => {
+  const legacyPayload = {
+    v: 1, jti: 'x'.repeat(32), iat: Date.now(), exp: Date.now() + 60000,
+    tenantId: '42', sourceDomain: CLAIMS.sourceDomain, destinationDomain: CLAIMS.destinationDomain,
+    waiTag: CLAIMS.waiTag, sessionId: CLAIMS.sessionId, userId: null, sig: 'ab'.repeat(32)
+  };
+  const legacy = Buffer.from(JSON.stringify(legacyPayload)).toString('base64');
+  assert.strictEqual(verifyCrossDomainToken(legacy, SECRET).error, 'UNSUPPORTED_VERSION');
+});
+
+test('unversioned legacy token is rejected', () => {
   const legacy = Buffer.from(JSON.stringify({
     waiTag: CLAIMS.waiTag, sessionId: CLAIMS.sessionId, userId: null,
     domain: 'dest.example.com', exp: Date.now() + 60000, sig: 'ab'.repeat(32)
   })).toString('base64');
-  assert.strictEqual(verifyCrossDomainToken(legacy, SECRET).error, 'MISSING_CLAIMS');
+  assert.strictEqual(verifyCrossDomainToken(legacy, SECRET).error, 'UNSUPPORTED_VERSION');
 });
 
 test('expired token is rejected', () => {

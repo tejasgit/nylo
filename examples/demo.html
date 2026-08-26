@@ -167,6 +167,7 @@
       <div class="subtitle">Privacy-first cross-domain analytics - Interactive demonstration</div>
     </div>
     <div>
+      <span class="badge badge-purple" id="continuity-badge" style="display:none"></span>
       <span class="badge badge-green" id="status-badge">Initializing...</span>
       <span class="badge badge-purple">v1.0.0</span>
     </div>
@@ -220,6 +221,20 @@
       <button class="action-btn" onclick="refreshStats()">
         <span class="btn-icon">&#128260;</span> Refresh Stats
         <span class="btn-desc">Reload server-side statistics</span>
+      </button>
+
+      <h3>Privacy Controls</h3>
+      <button class="action-btn" onclick="showStoredContext()">
+        <span class="btn-icon">&#128065;</span> View Stored Context
+        <span class="btn-desc">Everything Nylo stores in this browser</span>
+      </button>
+      <button class="action-btn" onclick="resetSharedContext()">
+        <span class="btn-icon">&#128465;</span> Reset Context
+        <span class="btn-desc">Delete identity, start fresh &amp; unlinked</span>
+      </button>
+      <button class="action-btn" onclick="revokeConsentAndContext()">
+        <span class="btn-icon">&#128683;</span> Revoke Consent
+        <span class="btn-desc">Stop tracking and purge all data</span>
       </button>
     </div>
 
@@ -485,6 +500,70 @@
       addEventToLog('sdk_init', 'Nylo v1.0.0 initialized');
       refreshStats();
     });
+
+    // Transparent context-preservation indicator: shows whenever the SDK
+    // restores context — from this browser's storage or across domains.
+    window.addEventListener('nyloContextPreserved', function(e) {
+      var badge = document.getElementById('continuity-badge');
+      var source = e.detail && e.detail.source === 'cross_domain' ? 'cross-domain' : 'this browser';
+      if (badge) {
+        badge.style.display = 'inline-block';
+        badge.textContent = 'Context preserved (' + source + ')';
+        badge.title = 'Nylo restored your pseudonymous context' + (e.detail && e.detail.preservedAt ? ' at ' + e.detail.preservedAt : '');
+      }
+      addEventToLog('context_preserved', source);
+    });
+
+    function showStoredContext() {
+      if (!window.Nylo || !Nylo.getStoredContext) return;
+      Nylo.getStoredContext().then(function(ctx) {
+        var infoPanel = document.getElementById('info-panel');
+        var infoDetails = document.getElementById('info-details');
+        document.getElementById('info-panel-title').textContent = 'Stored Cross-Domain Context';
+        infoPanel.style.display = 'block';
+
+        if (!ctx) {
+          infoDetails.innerHTML = '<div class="empty-state"><p>No context is stored in this browser.</p></div>';
+          showToast('No stored context');
+          return;
+        }
+
+        var fmt = function(iso) { return iso ? new Date(iso).toLocaleString() : 'N/A'; };
+        infoDetails.innerHTML =
+          '<div class="session-info">' +
+          '<div class="wai-tag-display">' + ctx.waiTag + '</div>' +
+          '<div class="info-row"><span class="info-label">Created</span><span class="info-value">' + fmt(ctx.createdAt) + '</span></div>' +
+          '<div class="info-row"><span class="info-label">Last Used</span><span class="info-value">' + fmt(ctx.lastUsedAt) + '</span></div>' +
+          '<div class="info-row"><span class="info-label">Expires</span><span class="info-value">' + fmt(ctx.expiresAt) + '</span></div>' +
+          '<div class="info-row"><span class="info-label">Domain</span><span class="info-value">' + (ctx.domain || 'N/A') + '</span></div>' +
+          '<div class="info-row"><span class="info-label">Cross-Domain</span><span class="info-value">' + (ctx.crossDomainSynced ? 'Synced' : 'Not synced') + '</span></div>' +
+          '<div class="info-row"><span class="info-label">Retention</span><span class="info-value">max ' + ctx.retentionPolicy.maxAgeDays + 'd, unused ' + ctx.retentionPolicy.unusedExpiryDays + 'd</span></div>' +
+          '</div>';
+        addEventToLog('context_view', 'stored context displayed');
+        showToast('Stored context loaded');
+      });
+    }
+
+    function resetSharedContext() {
+      if (!window.Nylo || !Nylo.resetContext) return;
+      Nylo.resetContext().then(function() {
+        var badge = document.getElementById('continuity-badge');
+        if (badge) badge.style.display = 'none';
+        addEventToLog('context_reset', 'stored identity deleted, new unlinked identifier');
+        showToast('Context reset — new unlinked identifier');
+        showSession();
+      });
+    }
+
+    function revokeConsentAndContext() {
+      if (!window.Nylo || !Nylo.revokeContext) return;
+      Nylo.revokeContext();
+      var badge = document.getElementById('continuity-badge');
+      if (badge) badge.style.display = 'none';
+      document.getElementById('status-badge').textContent = 'Tracking off (consent revoked)';
+      addEventToLog('consent_revoked', 'tracking stopped, all data purged');
+      showToast('Consent revoked — all data deleted');
+    }
 
     function grantConsent() {
       if (window.Nylo) Nylo.setConsent({ analytics: true });

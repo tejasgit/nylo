@@ -29,8 +29,12 @@ test('tampered payload or signature is rejected', () => {
   const grant = signWriteGrant(CLAIMS, SECRET);
   const [payload, sig] = grant.split('.');
 
-  // Bit-flip the signature
-  const badSig = payload + '.' + (sig.slice(0, -1) + (sig.endsWith('A') ? 'B' : 'A'));
+  // Flip a character in the middle of the signature. (Never the last one:
+  // the final base64url char carries only 2 significant bits, so a last-char
+  // swap can decode to the identical signature bytes and "verify" fine.)
+  const mid = 10;
+  const flipped = sig[mid] === 'A' ? 'B' : 'A';
+  const badSig = payload + '.' + (sig.slice(0, mid) + flipped + sig.slice(mid + 1));
   assert.strictEqual(verifyWriteGrant(badSig, SECRET, {}).valid, false);
 
   // Swap in a forged payload claiming another tenant

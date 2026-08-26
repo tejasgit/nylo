@@ -1,10 +1,10 @@
 # WTX-1: Cross-Domain Context Preservation Protocol
 
-**Version:** 1.3.0-draft
+**Version:** 1.4.0-draft
 **Status:** Draft
 **Authors:** Ravi Teja Surampudi, Nylo Contributors
 **Created:** 2026-02-20
-**Updated:** 2026-03-18
+**Updated:** 2026-08-26
 **License:** This specification is released under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
 
 ---
@@ -58,10 +58,10 @@ WTX-1 is designed to:
 
 | Term | Definition |
 |------|-----------|
-| **WaiTag** | A pseudonymous identifier generated per-visitor using cryptographic randomness. Format: `wai_<timestamp_b36>_<random><domain_hash>`. Contains no direct identifiers; pseudonymous, not anonymous. |
+| **WaiTag** | A pseudonymous identifier generated per-visitor by hashing (SHA-256) a 128-bit cryptographically random value with a timestamp and a domain-specific salt. Format: `wai_<digest_hex[0:19]>_<digest_hex[19:27]>`. Contains no direct identifiers and no readable timestamp; pseudonymous, not anonymous. |
 | **Origin Domain** | The domain where the user's session begins and the WaiTag is generated. |
 | **Destination Domain** | The domain the user navigates to, which receives and verifies the WaiTag. |
-| **Cross-Domain Token** | A time-limited, server-signed token encoding the WaiTag for transfer between domains. |
+| **Cross-Domain Token** | A time-limited, server-signed **and encrypted** token encoding the WaiTag for transfer between domains. Contents are confidential in transit; only routing metadata is cleartext. |
 | **DNS Authorization** | Domain ownership verification via DNS TXT records that authorizes a domain to participate in WTX-1 identity sharing. |
 | **Verification Server** | The server-side component that issues, signs, and verifies cross-domain tokens. |
 | **Anonymous Mode** | A degraded operating mode where no WaiTag is generated and no identity is preserved. |
@@ -120,13 +120,13 @@ WTX-1 is designed to:
 
 ### 3.2 Step-by-Step
 
-1. **WaiTag Generation** — When a user first visits a participating domain, the SDK generates a WaiTag using the Web Crypto API (`crypto.getRandomValues`). The WaiTag format is `wai_<timestamp_base36>_<random_id><domain_hash>`.
+1. **WaiTag Generation** — When a user first visits a participating domain, the SDK generates a WaiTag using the Web Crypto API: 128 bits from `crypto.getRandomValues` are hashed (SHA-256, via `crypto.subtle.digest`) together with a timestamp and a domain-specific salt, and the digest becomes the identifier: `wai_<digest_hex[0:19]>_<digest_hex[19:27]>`.
 
 2. **Identity Registration** — The SDK registers the WaiTag with the verification server via `POST /api/tracking/register-waitag`. The server stores the WaiTag, session ID, originating domain, and timestamp.
 
 3. **Cross-Domain Navigation** — When the user navigates to another participating domain, a cross-domain token must be appended to the destination URL. The mechanism for link decoration is implementation-defined (e.g., server-side link rewriting, client-side click handlers, or manual URL construction).
 
-4. **Token Generation** — The server generates a signed, time-limited token encoding the user's WaiTag and session context. The server SHOULD verify that the destination domain is DNS-authorized before issuing the token.
+4. **Token Generation** — The server generates an encrypted, signed, time-limited token encoding the user's WaiTag and session context (Section 6). The server SHOULD verify that the destination domain is DNS-authorized before issuing the token.
 
 5. **Hash Fragment Transport** — The token is appended to the destination URL as a hash fragment (`#nylo_token=<token>`). Hash fragments are never sent to the server in HTTP requests, providing an additional privacy layer.
 
@@ -143,30 +143,37 @@ WTX-1 is designed to:
 ### 4.1 Structure
 
 ```
-wai_<random>_<domain_hash>
+wai_<digest_hex[0:19]>_<digest_hex[19:27]>
+```
+
+The identifier is derived, not assembled:
+
+```
+digest = SHA-256( random_hex(16 CSPRNG bytes) | timestamp | "nylo:" + lowercase(hostname) )
 ```
 
 | Component | Encoding | Length | Source |
 |-----------|----------|--------|--------|
 | Prefix | ASCII | 4 chars | Literal `wai_` |
-| Random ID | Base-36 | 19 chars | `crypto.getRandomValues(new Uint8Array(16))`, encoded to base-36 and truncated |
+| Digest part 1 | Hex | 19 chars | First 19 hex chars of the SHA-256 digest |
 | Separator | ASCII | 1 char | Literal `_` |
-| Domain Hash | Hex | up to 8 chars | One-way hash of `window.location.hostname` |
+| Digest part 2 | Hex | 8 chars | Next 8 hex chars of the SHA-256 digest |
 
-The random component provides 128 bits of cryptographic entropy (16 bytes from the Web Crypto API), encoded in base-36 for compactness.
+Unpredictability comes from the 128-bit CSPRNG input. Because only the one-way digest becomes the identifier, the WaiTag embeds **no readable timestamp** and **no reversible domain marker** — the timestamp and domain salt diversify the derivation but cannot be recovered from the identifier.
 
 ### 4.2 Example
 
 ```
-wai_0g0e161m0a0i0r0b0h0_1a2b3c4d
+wai_3f9c2ab81de04c57a6b_9e12f0d4
 ```
 
 ### 4.3 Properties
 
-- **Not reversible on its own** — No component can be reversed to identify a person absent an external mapping (e.g., one created via `identify()`)
+- **Not reversible on its own** — No component can be reversed to identify a person absent an external mapping (e.g., one created via `identify()`); the digest inputs (timestamp, domain) are likewise unrecoverable
 - **Not derived from direct identifiers** — No personal information is used as input; the WaiTag is nonetheless pseudonymous, not anonymous, because it persists and singles out a browser
-- **Domain-scoped** — The domain hash binds the WaiTag to its origin, but the hash is one-way and cannot reveal the domain to a third party
-- **Collision-resistant** — 64 bits of cryptographic randomness provides sufficient uniqueness for analytics use cases
+- **Domain-salted** — The domain participates in the derivation as a salt, so identical random inputs on different domains yield unrelated tags, without exposing any domain fingerprint in the identifier
+- **Collision-resistant** — The identifier exposes 108 bits (27 hex chars) of SHA-256 output derived from 128 bits of cryptographic randomness; collision probability for N identifiers is ≈ N²/2¹⁰⁹
+- **Fail-closed** — If the Web Crypto API (CSPRNG or SHA-256) is unavailable, no identifier is generated and tracking does not start; there is no predictable fallback format
 
 ### 4.4 What a WaiTag is NOT
 
@@ -311,39 +318,67 @@ Token cleanup prevents:
 
 ## 6. Token Format and Verification
 
-### 6.1 Token Contents
+### 6.1 Token Format (WTX-1 Token Format v2: Sign-then-Encrypt)
 
-A cross-domain token encodes:
+Tokens are **encrypted and signed**. The construction is sign-then-encrypt:
 
-| Field | Description |
+1. A canonical inner payload is signed with HMAC-SHA256.
+2. The signed payload is encrypted with AES-256-GCM.
+3. Encryption and MAC keys are **independently derived per tenant and per destination domain** using HKDF-SHA256 from the server token secret — a token minted for `dest-a.com` cannot be decrypted, verified, or replayed as a token for `dest-b.com`, even by the same tenant.
+
+The base64-encoded outer envelope exposes **only routing metadata**:
+
+| Envelope Field | Description |
+|-------|-------------|
+| `v` | Token format version (`2`; lower versions MUST be rejected) |
+| `tid` | Tenant routing identifier |
+| `dst` | Destination routing domain (selects the decryption key) |
+| `iv` | AES-GCM initialization vector |
+| `ct` | Ciphertext of the signed inner payload |
+| `tag` | AES-GCM authentication tag |
+
+The tenant and destination routing metadata (`tid`, `dst`), prefixed with a fixed protocol-version constant, are bound as AEAD associated data — altering them breaks decryption. The envelope `v` field is enforced by a pre-decryption version gate (only v2 is accepted), and all routing metadata MUST additionally be cross-checked against the signed inner payload after decryption.
+
+The encrypted inner payload contains:
+
+| Inner Field | Description |
 |-------|-------------|
 | `waiTag` | The pseudonymous identifier to transfer |
 | `sessionId` | The session identifier from the origin domain |
 | `userId` | Optional application-level identifier (may constitute personal data if linkable to an individual; requires lawful basis if used) |
-| `originDomain` | The domain that issued the token |
+| `sourceDomain` | The domain that issued the token |
 | `destinationDomain` | The intended recipient domain |
-| `issuedAt` | UTC timestamp of token creation |
-| `expiresAt` | UTC timestamp of token expiry |
-| `nonce` | Unique per-token identifier for replay protection |
-| `signature` | Server-generated HMAC-SHA256 signature |
+| `tenantId` | The tenant the token belongs to |
+| `iat` / `exp` | Issue and expiry timestamps |
+| `jti` | Unique per-token identifier for replay protection |
+| `sig` | Server-generated HMAC-SHA256 signature over the canonical payload |
+
+Identity and context fields (`waiTag`, `sessionId`, `userId`, `sourceDomain`) are therefore **confidential in transit**: anyone who observes the token (URL bar, browser history, a third-party script that races the cleanup) sees only ciphertext plus routing metadata, and cannot read the identifier without the server secret.
 
 ### 6.2 Verification Requirements
 
-The verification server MUST check:
+The verification server MUST check, in order:
 
-1. **Signature validity** — The token has not been tampered with
-2. **Expiry** — The token has not expired (configurable window, recommended default: 5 minutes)
-3. **Replay protection** — The token has not been previously verified. Each token MUST only be accepted once. The server MUST maintain a record of consumed token nonces for at least the token expiry window.
-4. **Domain authorization** — The destination domain SHOULD be DNS-authorized to receive identities
-5. **Origin matching** — The token SHOULD be validated against the domain making the verification request
+1. **Version** — Only token format v2 is accepted; legacy signed-cleartext (v1 or unversioned) tokens MUST be rejected with `UNSUPPORTED_VERSION`
+2. **Decryption / AEAD integrity** — The envelope must decrypt under the key derived for its routing metadata; any ciphertext, IV, tag, or routing tampering fails authentication
+3. **Signature validity** — The inner HMAC-SHA256 signature must verify, and the signed payload must agree with the envelope routing metadata
+4. **Expiry** — The token has not expired (configurable window, recommended default: 5 minutes) and is not future-dated
+5. **Replay protection** — The token has not been previously verified. Each token MUST only be accepted once. The server MUST maintain a record of consumed token identifiers (`jti`) for at least the token expiry window.
+6. **Domain authorization** — The destination domain SHOULD be DNS-authorized to receive identities
+7. **Destination/tenant binding** — The token's destination domain and tenant MUST match the authenticated verification context
 
 **Error codes:**
 
 | Code | Meaning |
 |------|---------|
+| `UNSUPPORTED_VERSION` | Token is not format v2 (includes all legacy cleartext tokens) |
+| `MALFORMED_TOKEN` | Token is not a decodable envelope |
+| `MISSING_SIGNATURE` | Envelope lacks the AES-GCM authentication tag, or the inner payload lacks a signature |
 | `TOKEN_EXPIRED` | Token has passed its expiry timestamp |
 | `TOKEN_REPLAYED` | Token has already been verified (replay attempt) |
-| `INVALID_SIGNATURE` | HMAC signature verification failed |
+| `INVALID_SIGNATURE` | Decryption or HMAC signature verification failed (covers ciphertext, IV, tag, routing and payload tampering, and wrong-key attempts) |
+| `INVALID_IAT` | Token is future-dated beyond clock skew |
+| `DOMAIN_MISMATCH` | Token destination does not match the requesting destination |
 | `DOMAIN_NOT_AUTHORIZED` | Destination domain is not DNS-authorized |
 | `ORIGIN_MISMATCH` | Token origin does not match the requesting domain's referrer |
 | `GRANT_REQUIRED` | No write grant accompanied the verification request (401) |
@@ -411,7 +446,7 @@ _nylo-verify.example.com  TXT  "nylo-domain-verify=<verification_code>"
 ### 7.3 Verification Flow
 
 1. Domain owner adds the TXT record to their DNS configuration
-2. Domain owner calls the verification endpoint: `POST /api/dns/verify`
+2. Domain owner calls the verification endpoint: `POST /api/domains/verify`, authenticated with their API key (`X-API-Key` header). Caller-supplied customer IDs MUST NOT be accepted as authentication for verification management endpoints.
 3. The server performs a DNS lookup for `_nylo-verify.<domain>`
 4. If the TXT record matches the expected verification code, the domain is authorized
 5. Authorization is cached server-side and periodically re-verified
@@ -447,6 +482,7 @@ When restoring identity, the SDK reads in order: cookie → localStorage → ses
   "userId": null,
   "domain": "example.com",
   "createdAt": "2026-02-20T12:00:00.000Z",
+  "lastUsedAt": "2026-02-20T12:00:00.000Z",
   "integrity": "<hash>"
 }
 ```
@@ -468,6 +504,23 @@ When the SDK reads stored identity data from any storage layer, it verifies the 
 
 Data stored in `localStorage` is encoded with a customer-specific salt and timestamp to prevent casual inspection. This is obfuscation, not cryptographic security — it prevents trivial reading of identity data via browser developer tools but does not provide protection against a determined attacker with page-level JavaScript access.
 
+### 8.5 Retention: Time-Limited Identifiers with Automatic Expiry
+
+Stored identifiers are time-limited. The reference implementation enforces, on **every storage read**:
+
+| Rule | Default | Behavior |
+|------|---------|----------|
+| Absolute lifetime | 180 days from `createdAt` | Identifier expires regardless of activity |
+| Unused expiry | 30 days from `lastUsedAt` | Identifier expires when not used (sliding window) |
+
+- **Use** means restoration for active tracking; `lastUsedAt` is updated ("touched") on each such read. Passive inspection via the context-view API does not extend retention.
+- Expired records are **deleted from all storage layers on read and never resurrected** — a fresh, unlinked identifier is minted instead.
+- Records without parseable timestamps (legacy formats) fail closed into expiry.
+- Both windows are integrator-configurable (`data-identity-max-age-days`, `data-identity-unused-expiry-days`), clamped to sane bounds; invalid values keep the defaults.
+- Enforcement happens at read time, so shortening a policy applies retroactively to already-stored records.
+
+The first-party cookie layer additionally expires via its own `max-age` (24 hours under ITP-style JavaScript cookie capping); the retention policy above governs the longer-lived `localStorage` layer.
+
 ---
 
 ## 9. Security Threat Model and Mitigations
@@ -481,7 +534,9 @@ Data stored in `localStorage` is encoded with a customer-specific salt and times
 | Token interception by browser extensions | Medium | Short expiration + one-time-use verification | Low (see Section 9.3) |
 | Token replay | High | One-time-use verification with server-side nonce tracking | None |
 | Token forgery (unsigned tokens) | Critical | Mandatory HMAC-SHA256 signature on all tokens; unsigned tokens rejected with `MISSING_SIGNATURE` error; server refuses to verify tokens if signing secret is not configured | None |
-| Token tampering | High | HMAC-SHA256 signature verification | None |
+| Token tampering | High | AES-256-GCM authenticated encryption + inner HMAC-SHA256 signature verification | None |
+| Token contents read by URL observers (history, copied links, racing scripts) | Medium | AES-256-GCM encryption — identity and context fields are ciphertext; only routing metadata (tenant ID, destination domain) is cleartext | Low — routing metadata itself is visible |
+| Token redirected to another destination | High | Per-destination HKDF key separation + AEAD-bound routing metadata + signed inner destination binding | None |
 | Token expiration bypass | High | Server-side timestamp validation (default 5 minutes) | None |
 | Stored identity tampering | Medium | HMAC-SHA256 integrity validation on every storage read; tampered data is rejected and cleared | Low — attacker with XSS can extract HMAC key from client-side code |
 | Token exposure via URL sharing | Medium | Early-cleanup removes token before page renders + short expiration + one-time-use | Negligible |
@@ -599,9 +654,9 @@ If the extension does manage to verify the token first, the SDK's verification w
 
 A captured token that is not immediately verified becomes useless within 5 minutes. The extension cannot store it for later use or transmit it to a remote server for delayed exploitation.
 
-**4. Tokens contain only pseudonymous data**
+**4. Token contents are encrypted, and the underlying data is pseudonymous**
 
-Even if an extension successfully intercepts and verifies a token, it obtains only:
+A captured token is ciphertext: the extension can read only routing metadata (tenant ID, destination domain). To learn anything else it must win the verification race against the SDK. Even then, it obtains only:
 - A WaiTag (pseudonymous identifier containing no direct identifiers)
 - A session ID (random string)
 - An optional application-level user ID
@@ -690,7 +745,7 @@ DNS TXT record verification is subject to DNS spoofing attacks. An attacker who 
 
 ### 9.7 Server-Side Key Management
 
-The shared HMAC key used for token signing MUST be stored securely on participating servers. Implementations SHOULD:
+The server-side token secret (`NYLO_TOKEN_SECRET`) — from which per-tenant, per-destination encryption and MAC keys are independently derived via HKDF-SHA256 — MUST be stored securely on participating servers. Implementations SHOULD:
 - Rotate HMAC keys periodically (recommended: every 90 days)
 - Support multiple active keys during rotation periods
 - Use hardware security modules (HSMs) or key management services where available
@@ -728,9 +783,16 @@ Content-Security-Policy:
 - `frame-ancestors 'none'` prevents the page from being embedded in iframes, reducing clickjacking risk.
 - Sites using strict CSP with hash-based script allowlisting can compute the SHA-256 hash of the early-cleanup script and add it to `script-src`.
 
-### 9.10 Mandatory Token Signing and Issuance Controls
+### 9.10 Mandatory Token Encryption, Signing, and Issuance Controls
 
-All cross-domain tokens MUST be signed with HMAC-SHA256 using a server-side secret (`NYLO_TOKEN_SECRET`). Unsigned tokens MUST be rejected by the verification server with a `MISSING_SIGNATURE` error.
+All cross-domain tokens MUST use the sign-then-encrypt construction of Section 6.1: an HMAC-SHA256-signed canonical payload sealed with AES-256-GCM. Unsigned tokens MUST be rejected with `MISSING_SIGNATURE`; legacy signed-cleartext (pre-v2) tokens MUST be rejected with `UNSUPPORTED_VERSION`.
+
+**Encryption requirements:**
+
+1. Encryption and MAC keys MUST be derived independently per `(tenantId, destinationDomain)` pair via HKDF-SHA256 from `NYLO_TOKEN_SECRET`; the raw secret MUST NOT be used directly as either key.
+2. The cleartext envelope MUST carry only routing metadata (version, tenant ID, destination domain, IV, ciphertext, tag). Identity and context fields MUST appear only inside the ciphertext.
+3. Tenant and destination routing metadata MUST be bound as AEAD associated data (the AAD input includes a fixed protocol-version constant); the envelope version field MUST be enforced by a pre-decryption gate, and all routing metadata MUST be cross-checked against the signed inner payload after decryption.
+4. Each token MUST use a fresh random IV; AES-GCM key+IV pairs MUST never repeat.
 
 **Server configuration requirements:**
 
@@ -799,6 +861,8 @@ Implementations MUST provide:
 - **Transparency** — Ability to view what data has been collected
 - **Deletion** — Ability to request deletion of all data associated with a WaiTag (GDPR Article 17)
 
+The reference implementation exposes these as public SDK APIs: `getStoredContext()` (passive view of everything stored in the browser, including expiry projections — does not extend retention), `resetContext()` (delete stored identity and mint a fresh unlinked one), and `revokeContext()` (withdraw consent, abort pending work, and purge all storage). It also dispatches a `nyloContextPreserved` DOM event whenever context is restored from storage or across domains, enabling a user-visible continuity indicator.
+
 ### 10.4 Consent-Gated Degradation
 
 When consent is denied:
@@ -808,9 +872,9 @@ When consent is denied:
 - No data persists beyond the current page session
 - The SDK operates in a fully anonymous mode with no cross-domain capability
 
-### 10.5 Identifier Rotation
+### 10.5 Identifier Expiry and Rotation
 
-WaiTags stored in `localStorage` persist until explicitly cleared. To limit the window of potential correlation, implementations SHOULD implement rotation policies — for example, regenerating the WaiTag every 90 days. This bounds the maximum duration over which a single pseudonymous identifier can be used to correlate cross-domain visits.
+Stored identifiers MUST NOT persist indefinitely. The reference implementation enforces automatic expiry on every read — 180 days absolute lifetime and 30 days unused expiry by default, both configurable (Section 8.5); expired identifiers are deleted and replaced with fresh, unlinked ones. This bounds the maximum duration over which a single pseudonymous identifier can be used to correlate cross-domain visits. Implementations MAY additionally rotate identifiers more aggressively (e.g., every 90 days regardless of use).
 
 ---
 
@@ -970,21 +1034,22 @@ console.log(timings.tokenVisibilityWindowMs);  // e.g., 0.142 (with early-cleanu
 
 ### 13.3 Token Entropy
 
-**Claim:** Each WaiTag contains 128 bits of cryptographic entropy from the Web Crypto API.
+**Claim:** Each WaiTag is derived from 128 bits of cryptographic entropy from the Web Crypto API, exposed through 108 bits (27 hex chars) of a SHA-256 digest.
 
 | Component | Entropy Source | Bits |
 |-----------|---------------|------|
-| Random ID | `crypto.getRandomValues(new Uint8Array(16))` | 128 |
-| Domain hash | Deterministic (not entropy) | 0 |
-| **Total cryptographic entropy** | | **128 bits** |
+| CSPRNG input | `crypto.getRandomValues(new Uint8Array(16))` | 128 |
+| Timestamp + domain salt (digest inputs) | Deterministic diversifiers (not entropy) | 0 |
+| Digest output used in identifier | 27 hex chars of SHA-256(inputs) | 108 exposed |
 
 **Measurement methodology:**
 
 1. Generate 10,000 WaiTags and verify no collisions
-2. Extract the random component and verify uniform distribution across the base-36 character space
-3. Verify the source is `crypto.getRandomValues` (not `Math.random`)
+2. Verify identifiers match `wai_[0-9a-f]{19}_[0-9a-f]{8}` and are uniformly distributed across the hex character space
+3. Verify the randomness source is `crypto.getRandomValues` (not `Math.random`) and the digest is computed via `crypto.subtle.digest`
+4. Verify no substring of the identifier decodes to a timestamp, and that identifiers generated in the same millisecond on the same domain differ
 
-**Expected collision probability:** For 128 bits of entropy, the probability of collision in a set of N identifiers is approximately N²/2¹²⁹. For 1 billion identifiers: ~1.47 × 10⁻²¹.
+**Expected collision probability:** For the 108-bit exposed digest, the probability of collision in a set of N identifiers is approximately N²/2¹⁰⁹. For 1 billion identifiers: ~1.5 × 10⁻¹⁵.
 
 ### 13.4 Token Lifetime and Replay Surface
 
@@ -1060,16 +1125,17 @@ This is a structural guarantee, not a runtime measurement. Per RFC 3986 Section 
 3. Reload the page — the SDK should reject the tampered cookie and generate a new identity
 4. Verify the old `waiTag` is no longer in use
 
-### 13.8 Mandatory Token Signing
+### 13.8 Mandatory Token Encryption and Signing
 
-**Claim:** The verification server rejects 100% of unsigned cross-domain tokens. No unsigned token can pass verification regardless of payload contents.
+**Claim:** The verification server rejects 100% of unencrypted or unsigned cross-domain tokens. No cleartext token can pass verification regardless of payload contents, and no ciphertext token missing its authentication tag can pass.
 
 **Measurement methodology:**
 
-1. Create a valid-looking token payload: `btoa(JSON.stringify({waiTag:"wai_test_1234", sessionId:"test", exp:9999999999999}))`
-2. Submit it to `/api/tracking/verify-cross-domain-token`
-3. Verify the server returns `403 MISSING_SIGNATURE`
-4. The same payload with a valid HMAC signature should succeed
+1. Create a valid-looking legacy cleartext payload: `btoa(JSON.stringify({waiTag:"wai_test_1234", sessionId:"test", exp:9999999999999}))`
+2. Submit it to `/api/tracking/verify-cross-domain-token` — verify the server rejects it with `UNSUPPORTED_VERSION`
+3. Craft a v2-shaped envelope without its `tag` field — verify the server rejects it with `MISSING_SIGNATURE`
+4. Flip one ciphertext byte of a genuine v2 token — verify rejection with `INVALID_SIGNATURE`
+5. Only a genuine v2 token (encrypted + signed by the server) should succeed, exactly once
 
 ### 13.9 Summary Table
 
@@ -1084,7 +1150,8 @@ This is a structural guarantee, not a runtime measurement. Per RFC 3986 Section 
 | Replay attempts accepted | 1 (one-time-use) | Sequential verification test |
 | HTTP bytes leaked (hash transport) | 0 | Packet capture |
 | Verification latency | < 100ms typical | `Nylo.getTimingMetrics().tokenVerification.durationMs` |
-| Unsigned token acceptance rate | 0% (all rejected) | Submit unsigned token, verify 403 response |
+| Cleartext/unsigned token acceptance rate | 0% (all rejected) | Submit legacy cleartext and tag-stripped tokens, verify rejection |
+| Token payload confidentiality | Identity fields unreadable without server secret | Decode envelope, verify only routing metadata is cleartext |
 | Storage integrity validation | HMAC-SHA256 on every read | Tamper cookie, verify rejection on reload |
 
 ---
@@ -1093,6 +1160,11 @@ This is a structural guarantee, not a runtime measurement. Per RFC 3986 Section 
 
 ### v1.4.0-draft (2026-08-26)
 
+- **SECURITY:** Token format v2 — tokens are now **encrypted and signed** (sign-then-encrypt: HMAC-SHA256 inner signature, AES-256-GCM envelope, per-tenant/per-destination HKDF-SHA256 key derivation, AEAD-bound routing metadata). Legacy signed-cleartext tokens are rejected with `UNSUPPORTED_VERSION` (Sections 6.1, 6.2, 9.10, 13.8)
+- **PRIVACY:** WaiTag generation is now digest-based — SHA-256 over CSPRNG randomness, timestamp, and a domain salt; identifiers no longer embed a readable timestamp or domain hash (Sections 2, 4, 13.3)
+- **PRIVACY:** Stored identifiers are time-limited with automatic expiry — 180-day absolute / 30-day unused defaults, configurable, enforced on every read; legacy records without timestamps fail closed (new Section 8.5, updated 10.5)
+- **PRIVACY:** User-facing context controls specified — `getStoredContext()` / `resetContext()` / `revokeContext()` and the `nyloContextPreserved` transparency event (Section 10.3)
+- **SECURITY FIX:** Domain verification management endpoints require API-key authentication; caller-supplied customer IDs are no longer accepted (Section 7.3)
 - **SECURITY FIX:** Added Section 9.11 Write Grants — browser write paths (ingestion, registration, verification) are authorized by short-lived server-signed grants; tenant identity is resolved from server-side domain→tenant configuration, never from caller-supplied customer IDs or headers
 - **SECURITY FIX:** Verification is authorized before consumption — unauthorized verification attempts can no longer burn tokens (denial-of-service fix)
 - **SECURITY FIX:** Replay consumption is atomic, and production deployments MUST use a durable shared replay store or refuse to start

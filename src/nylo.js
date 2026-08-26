@@ -26,7 +26,12 @@
     securityValidation: true,
     crossDomainEnabled: true,
     anonymousMode: false,
-    allowQueryParamTokens: false
+    allowQueryParamTokens: false,
+    // Time-limited retention: stored identifiers expire automatically —
+    // absolutely after identityMaxAgeDays, and sooner when unused for
+    // identityUnusedExpiryDays (sliding window, touched on each use).
+    identityMaxAgeDays: 180,
+    identityUnusedExpiryDays: 30
   };
 
   var state = {
@@ -158,27 +163,48 @@
 
     /**
      * WaiTag Generation (Patent-Pending)
-     * Generates a pseudonymous cross-domain identifier
-     * Format: wai_<timestamp_base36>_<random><domain_hash>
+     * Generates a pseudonymous cross-domain identifier.
+     *
+     * Derivation: SHA-256 over (128-bit CSPRNG random value | timestamp |
+     * domain-specific salt). The digest — never the raw inputs — becomes
+     * the identifier, so the tag embeds no readable timestamp and no
+     * reversible domain marker, while unpredictability comes from the
+     * CSPRNG input. Fails closed (resolves null) without Web Crypto —
+     * there is no predictable fallback identifier.
+     * Format: wai_<digest[0:19]>_<digest[19:27]> (hex)
      *
      * COMMERCIAL: This function is part of the cross-domain identity
      * system covered by COMMERCIAL-LICENSE.
      */
     generateWaiTag: function(domain) {
-      if (!window.crypto || !window.crypto.getRandomValues) {
-        Logger.error('crypto.getRandomValues not available — cannot generate secure WaiTag');
-        return null;
+      if (!window.crypto || !window.crypto.getRandomValues ||
+          !window.crypto.subtle || !window.crypto.subtle.digest) {
+        Logger.error('Web Crypto not available — cannot generate secure WaiTag');
+        return Promise.resolve(null);
       }
 
       var randomBytes = new Uint8Array(16);
       window.crypto.getRandomValues(randomBytes);
 
-      var randomId = Array.from(randomBytes, function(byte) {
-        return byte.toString(36).padStart(2, '0');
-      }).join('').substring(0, 19);
+      var randomHex = Array.from(randomBytes, function(byte) {
+        return byte.toString(16).padStart(2, '0');
+      }).join('');
 
-      var domainHash = this.hashString(domain || 'default').substring(0, 8);
-      return 'wai_' + randomId + '_' + domainHash;
+      var timestamp = Date.now().toString();
+      var salt = 'nylo:' + String(domain || 'default').toLowerCase();
+      var material = new TextEncoder().encode(randomHex + '|' + timestamp + '|' + salt);
+
+      return window.crypto.subtle.digest('SHA-256', material)
+        .then(function(digestBuffer) {
+          var digestHex = Array.from(new Uint8Array(digestBuffer), function(byte) {
+            return byte.toString(16).padStart(2, '0');
+          }).join('');
+          return 'wai_' + digestHex.substring(0, 19) + '_' + digestHex.substring(19, 27);
+        })
+        .catch(function() {
+          Logger.error('SHA-256 digest failed — cannot generate secure WaiTag');
+          return null;
+        });
     },
 
     hashString: function(str) {
@@ -499,6 +525,7 @@
                 userId: state.userId,
                 domain: domain,
                 syncedAt: new Date().toISOString(),
+                lastUsedAt: new Date().toISOString(),
                 integrity: hmac
               });
             })
@@ -511,6 +538,7 @@
                 userId: state.userId,
                 domain: domain,
                 syncedAt: new Date().toISOString(),
+                lastUsedAt: new Date().toISOString(),
                 integrity: null
               });
             });
@@ -522,6 +550,7 @@
             timings: state.performanceMetrics.timings
           });
 
+          self.notifyContextPreserved('cross_domain');
           Logger.info('Cross-domain identity synchronized');
           return true;
         }
@@ -543,9 +572,8 @@
       if (isCancelled()) return Promise.resolve();
 
       state.sessionId = Security.generateSecureId(domain);
-      state.waiTag = Security.generateWaiTag(domain);
 
-      if (!state.sessionId || !state.waiTag) {
+      if (!state.sessionId) {
         // Fail closed: without Web Crypto there are no unpredictable
         // identifiers. A timestamp-derived fallback would be a guessable
         // identity, so no identity is created and tracking does not start.
@@ -556,36 +584,52 @@
         return Promise.reject({ nyloAborted: 'crypto_unavailable' });
       }
 
-      return Security.generateIntegrityHMAC(state.sessionId, domain, state.waiTag)
-        .then(function(hmac) {
-          if (isCancelled()) return; // superseded — never persist or register stale identity
-          var identityData = {
-            sessionId: state.sessionId,
-            waiTag: state.waiTag,
-            userId: state.userId,
-            domain: domain,
-            createdAt: new Date().toISOString(),
-            integrity: hmac
-          };
+      return Security.generateWaiTag(domain).then(function(waiTag) {
+        if (isCancelled()) return;
+        if (!waiTag) {
+          // Same fail-closed rule for the WaiTag digest path.
+          Logger.error('Secure randomness unavailable - tracking disabled (no predictable fallback identity)');
+          state.sessionId = null;
+          state.waiTag = null;
+          state.trackingStarted = false;
+          throw { nyloAborted: 'crypto_unavailable' };
+        }
+        state.waiTag = waiTag;
+        var nowIso = new Date().toISOString();
 
-          self.storeIdentityData(identityData);
-          self.registerIdentityWithServer(identityData);
-          Logger.info('New identity generated:', state.waiTag);
-        })
-        .catch(function() {
-          if (isCancelled()) return;
-          Logger.error('HMAC generation failed — identity stored without integrity (will be rejected on next read if crypto becomes available)');
-          var identityData = {
-            sessionId: state.sessionId,
-            waiTag: state.waiTag,
-            userId: state.userId,
-            domain: domain,
-            createdAt: new Date().toISOString(),
-            integrity: null
-          };
-          self.storeIdentityData(identityData);
-          self.registerIdentityWithServer(identityData);
-        });
+        return Security.generateIntegrityHMAC(state.sessionId, domain, state.waiTag)
+          .then(function(hmac) {
+            if (isCancelled()) return; // superseded — never persist or register stale identity
+            var identityData = {
+              sessionId: state.sessionId,
+              waiTag: state.waiTag,
+              userId: state.userId,
+              domain: domain,
+              createdAt: nowIso,
+              lastUsedAt: nowIso,
+              integrity: hmac
+            };
+
+            self.storeIdentityData(identityData);
+            self.registerIdentityWithServer(identityData);
+            Logger.info('New identity generated:', state.waiTag);
+          })
+          .catch(function() {
+            if (isCancelled()) return;
+            Logger.error('HMAC generation failed — identity stored without integrity (will be rejected on next read if crypto becomes available)');
+            var identityData = {
+              sessionId: state.sessionId,
+              waiTag: state.waiTag,
+              userId: state.userId,
+              domain: domain,
+              createdAt: nowIso,
+              lastUsedAt: nowIso,
+              integrity: null
+            };
+            self.storeIdentityData(identityData);
+            self.registerIdentityWithServer(identityData);
+          });
+      });
     },
 
     storeIdentityData: function(identityData) {
@@ -658,7 +702,53 @@
       } catch (e) {}
     },
 
-    getStoredIdentityData: function() {
+    purgeIdentityStorage: function() {
+      this._clearStorageLayer('cookie');
+      this._clearStorageLayer('localStorage');
+      this._clearStorageLayer('sessionStorage');
+    },
+
+    /**
+     * Time-limited retention policy. A stored identity expires:
+     *  - absolutely, identityMaxAgeDays after it was created locally, and
+     *  - when unused, identityUnusedExpiryDays after it was last used.
+     * Records without parseable timestamps (legacy formats) fail closed
+     * into expiry — a fresh identity is minted instead of resurrecting
+     * data of unknown age.
+     */
+    _isIdentityExpired: function(d, nowMs) {
+      var maxAgeMs = config.identityMaxAgeDays * 86400000;
+      var unusedMs = config.identityUnusedExpiryDays * 86400000;
+      var born = Date.parse(d.createdAt || d.syncedAt || '');
+      var used = Date.parse(d.lastUsedAt || d.syncedAt || d.createdAt || '');
+      if (isNaN(born) || isNaN(used)) return true;
+      if (nowMs - born > maxAgeMs) return true;
+      if (nowMs - used > unusedMs) return true;
+      return false;
+    },
+
+    /**
+     * Transparent context-preservation notification (privacy compliance
+     * layer): host pages listen for this event to display a
+     * context-continuity indicator whenever context is restored — from
+     * first-party storage or across domains.
+     */
+    notifyContextPreserved: function(source) {
+      try {
+        window.dispatchEvent(new CustomEvent('nyloContextPreserved', {
+          detail: {
+            source: source,
+            waiTag: state.waiTag,
+            referringDomain: state.crossDomainData.referringDomain,
+            crossDomainSynced: state.crossDomainData.identitySynced,
+            preservedAt: new Date().toISOString()
+          }
+        }));
+      } catch (e) {}
+    },
+
+    getStoredIdentityData: function(opts) {
+      opts = opts || {};
       var self = this;
       var candidates = this._readRawStoredData();
 
@@ -708,7 +798,26 @@
         });
       });
 
-      return verificationChain;
+      return verificationChain.then(function(verified) {
+        if (!verified) return null;
+
+        // Automatic expiry of unused identifiers: retention is enforced on
+        // every read, so policy changes apply to already-stored records.
+        if (self._isIdentityExpired(verified, Date.now())) {
+          Logger.info('Stored identity expired by retention policy — deleting');
+          self.purgeIdentityStorage();
+          return null;
+        }
+
+        // Sliding unused-window: reading for active use counts as use.
+        // Passive views (opts.touch === false) do not extend retention.
+        if (opts.touch !== false && state.consent === 'granted') {
+          verified.lastUsedAt = new Date().toISOString();
+          self.storeIdentityData(verified);
+        }
+
+        return verified;
+      });
     },
 
     registerIdentityWithServer: function(identityData) {
@@ -1564,6 +1673,7 @@
                   state.sessionId = storedIdentity.sessionId;
                   state.waiTag = storedIdentity.waiTag;
                   state.userId = storedIdentity.userId;
+                  CrossDomainIdentity.notifyContextPreserved('first_party_storage');
                 } else {
                   return CrossDomainIdentity.generateNewIdentity(cancelled);
                 }
@@ -1622,7 +1732,7 @@
   }
 
   function buildApi() {
-    return {
+    var api = {
       track: Tracking.customEvent,
       trackConversion: Tracking.conversion,
       identify: function(userId) {
@@ -1662,6 +1772,75 @@
           referringDomain: state.crossDomainData.referringDomain
         };
       },
+      /**
+       * Privacy-compliance "view" control: a safe, read-only description of
+       * everything Nylo has stored about this browser on this domain.
+       * Viewing does not extend the retention window.
+       */
+      getStoredContext: function() {
+        if (config.anonymousMode) return Promise.resolve(null);
+        return CrossDomainIdentity.getStoredIdentityData({ touch: false })
+          .then(function(d) {
+            if (!d) return null;
+            var born = Date.parse(d.createdAt || d.syncedAt || '');
+            var used = Date.parse(d.lastUsedAt || d.syncedAt || d.createdAt || '');
+            var absoluteExpiry = isNaN(born) ? null : born + config.identityMaxAgeDays * 86400000;
+            var unusedExpiry = isNaN(used) ? null : used + config.identityUnusedExpiryDays * 86400000;
+            var expiresAt = null;
+            if (absoluteExpiry !== null || unusedExpiry !== null) {
+              expiresAt = Math.min(
+                absoluteExpiry === null ? Infinity : absoluteExpiry,
+                unusedExpiry === null ? Infinity : unusedExpiry
+              );
+            }
+            return {
+              waiTag: d.waiTag,
+              sessionId: d.sessionId,
+              userId: d.userId || null,
+              domain: d.domain || null,
+              createdAt: d.createdAt || d.syncedAt || null,
+              lastUsedAt: d.lastUsedAt || null,
+              expiresAt: expiresAt === null ? null : new Date(expiresAt).toISOString(),
+              crossDomainSynced: state.crossDomainData.identitySynced,
+              retentionPolicy: {
+                maxAgeDays: config.identityMaxAgeDays,
+                unusedExpiryDays: config.identityUnusedExpiryDays
+              }
+            };
+          })
+          .catch(function() { return null; });
+      },
+      /**
+       * Privacy-compliance "reset" control: deletes the stored identity
+       * from every storage layer and (when tracking is active) mints a
+       * fresh identifier with no link to the old one.
+       */
+      resetContext: function() {
+        if (config.anonymousMode) return Promise.resolve(false);
+        CrossDomainIdentity.purgeIdentityStorage();
+        state.sessionId = null;
+        state.waiTag = null;
+        state.userId = null;
+        state.crossDomainData.identitySynced = false;
+        state.crossDomainData.tokenReceived = false;
+        state.crossDomainData.referringDomain = null;
+        Logger.info('Context reset — stored identity deleted');
+        if (state.consent === 'granted' && state.trackingStarted) {
+          return CrossDomainIdentity.generateNewIdentity()
+            .then(function() { return true; })
+            .catch(function() { return false; });
+        }
+        return Promise.resolve(true);
+      },
+      /**
+       * Privacy-compliance "revoke" control: withdraws consent, which stops
+       * tracking and purges identity, queues and grants — the same
+       * fail-closed path as setConsent({ analytics: false }).
+       */
+      revokeContext: function() {
+        api.setConsent({ analytics: false });
+        return true;
+      },
       setConsent: function(consent) {
         if (consent && consent.analytics === false) {
           var wasGranted = state.consent === 'granted';
@@ -1690,6 +1869,7 @@
       version: config.version,
       destroy: cleanup
     };
+    return api;
   }
 
   function initialize() {
@@ -1712,6 +1892,17 @@
     if (script && script.getAttribute('data-allow-query-params') === 'true') {
       config.allowQueryParamTokens = true;
     }
+    // Retention overrides (days). Invalid or out-of-range values keep the
+    // privacy-preserving defaults; the cap prevents "never expires" setups.
+    function readRetentionDays(attr, fallback) {
+      var raw = script && script.getAttribute(attr);
+      if (!raw) return fallback;
+      var parsed = parseInt(raw, 10);
+      if (isNaN(parsed) || parsed < 1 || parsed > 3650) return fallback;
+      return parsed;
+    }
+    config.identityMaxAgeDays = readRetentionDays('data-identity-max-age-days', config.identityMaxAgeDays);
+    config.identityUnusedExpiryDays = readRetentionDays('data-identity-unused-expiry-days', config.identityUnusedExpiryDays);
 
     state.consent = Consent.read();
     window.Nylo = buildApi();

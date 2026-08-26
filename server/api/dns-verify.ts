@@ -46,7 +46,7 @@ export function registerDnsVerificationRoutes(app: any, storage: DnsVerification
 
   app.post("/api/domains/request-verification", async (req: Request, res: Response) => {
     try {
-      const { domain: rawDomain, customerId: rawCustomerId } = req.body;
+      const { domain: rawDomain } = req.body;
       const apiKey = req.headers['x-api-key'] as string;
 
       let validDomain: string;
@@ -59,15 +59,15 @@ export function registerDnsVerificationRoutes(app: any, storage: DnsVerification
         });
       }
 
-      let customer;
-      if (apiKey) {
-        customer = await storage.getCustomerByApiKey(apiKey);
+      // Tenant identity comes only from authenticated API-key lookup.
+      // Caller-provided customer IDs are never accepted as authentication
+      // (same invariant as the tracking endpoints — see SECURITY.md).
+      if (!apiKey) {
+        return res.status(401).json({ success: false, error: 'API_KEY_REQUIRED', message: 'Authenticate with the X-API-Key header.' });
       }
-      if (!customer && rawCustomerId) {
-        customer = await storage.getCustomer(parseInt(rawCustomerId));
-      }
+      const customer = await storage.getCustomerByApiKey(apiKey);
       if (!customer) {
-        return res.status(404).json({ success: false, message: 'Customer not found' });
+        return res.status(403).json({ success: false, error: 'INVALID_API_KEY', message: 'Unknown API key.' });
       }
 
       const existing = await storage.getDomainVerification(validDomain, customer.id);
@@ -112,7 +112,7 @@ export function registerDnsVerificationRoutes(app: any, storage: DnsVerification
 
   app.post("/api/domains/verify", async (req: Request, res: Response) => {
     try {
-      const { domain: rawDomain, customerId: rawCustomerId } = req.body;
+      const { domain: rawDomain } = req.body;
       const apiKey = req.headers['x-api-key'] as string;
 
       let validDomain: string;
@@ -125,15 +125,15 @@ export function registerDnsVerificationRoutes(app: any, storage: DnsVerification
         });
       }
 
-      let customer;
-      if (apiKey) {
-        customer = await storage.getCustomerByApiKey(apiKey);
+      // Tenant identity comes only from authenticated API-key lookup.
+      // Caller-provided customer IDs are never accepted as authentication
+      // (same invariant as the tracking endpoints — see SECURITY.md).
+      if (!apiKey) {
+        return res.status(401).json({ success: false, error: 'API_KEY_REQUIRED', message: 'Authenticate with the X-API-Key header.' });
       }
-      if (!customer && rawCustomerId) {
-        customer = await storage.getCustomer(parseInt(rawCustomerId));
-      }
+      const customer = await storage.getCustomerByApiKey(apiKey);
       if (!customer) {
-        return res.status(404).json({ success: false, message: 'Customer not found' });
+        return res.status(403).json({ success: false, error: 'INVALID_API_KEY', message: 'Unknown API key.' });
       }
 
       const verification = await storage.getDomainVerification(validDomain, customer.id);
@@ -208,7 +208,6 @@ export function registerDnsVerificationRoutes(app: any, storage: DnsVerification
   app.get("/api/domains/status", async (req: Request, res: Response) => {
     try {
       const rawDomain = req.query.domain as string;
-      const rawCustomerId = req.query.customerId as string;
       const apiKey = req.headers['x-api-key'] as string;
 
       if (!rawDomain) {
@@ -225,15 +224,15 @@ export function registerDnsVerificationRoutes(app: any, storage: DnsVerification
         });
       }
 
-      let customer;
-      if (apiKey) {
-        customer = await storage.getCustomerByApiKey(apiKey);
+      // Tenant identity comes only from authenticated API-key lookup.
+      // Caller-provided customer IDs are never accepted as authentication
+      // (same invariant as the tracking endpoints — see SECURITY.md).
+      if (!apiKey) {
+        return res.status(401).json({ success: false, error: 'API_KEY_REQUIRED', message: 'Authenticate with the X-API-Key header.' });
       }
-      if (!customer && rawCustomerId) {
-        customer = await storage.getCustomer(parseInt(rawCustomerId));
-      }
+      const customer = await storage.getCustomerByApiKey(apiKey);
       if (!customer) {
-        return res.status(404).json({ success: false, message: 'Customer not found' });
+        return res.status(403).json({ success: false, error: 'INVALID_API_KEY', message: 'Unknown API key.' });
       }
 
       const verification = await storage.getDomainVerification(validDomain, customer.id);
