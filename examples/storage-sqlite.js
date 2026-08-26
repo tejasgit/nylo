@@ -72,7 +72,27 @@ function createSqliteStorage(dbPath) {
   );
   defaultCustomer.run(1, 'Demo Customer', 'demo_api_key_12345678');
 
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS consumed_tokens (
+      token_hash TEXT PRIMARY KEY,
+      expires_at INTEGER NOT NULL
+    );
+  `);
+
   return {
+    // Durable atomic replay store for WTX-1 tokens: INSERT OR IGNORE is
+    // atomic in SQLite, so of N concurrent consumes exactly one wins, and
+    // consumed hashes survive server restarts (unlike the in-memory store).
+    tokenReplayStore: {
+      consumeToken(tokenHash, ttlMs) {
+        db.prepare('DELETE FROM consumed_tokens WHERE expires_at < ?').run(Date.now());
+        const result = db.prepare(
+          'INSERT OR IGNORE INTO consumed_tokens (token_hash, expires_at) VALUES (?, ?)'
+        ).run(tokenHash, Date.now() + (ttlMs || 300000));
+        return result.changes === 1;
+      }
+    },
+
     async createInteraction(data) {
       const stmt = db.prepare(`
         INSERT INTO interactions

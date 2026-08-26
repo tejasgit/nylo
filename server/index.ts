@@ -14,24 +14,68 @@ import express from 'express';
 import { registerTrackingRoutes } from './api/tracking';
 import { registerWaiTagTrackingRoutes } from './api/waitag-tracking';
 import { registerDnsVerificationRoutes } from './api/dns-verify';
-import { originAllowed } from './utils/security-core';
+import { registerGrantRoutes } from './api/grant';
+import { originAllowed, isValidDomainName } from './utils/security-core';
 
 export interface NyloServerOptions {
   allowedOrigins?: string[];
   enforceHttps?: boolean;
+  /**
+   * Canonical public host (`analytics.example.com` or `host:port`) used as
+   * the HTTPS redirect target. Required when enforceHttps is on: redirects
+   * must never be built from the client-controlled Host header.
+   * Falls back to the NYLO_CANONICAL_HOST environment variable.
+   */
+  canonicalHost?: string;
+}
+
+function isValidCanonicalHost(value: string): boolean {
+  const colon = value.indexOf(':');
+  const host = colon === -1 ? value : value.slice(0, colon);
+  const port = colon === -1 ? '' : value.slice(colon + 1);
+  if (port !== '' && !/^\d{1,5}$/.test(port)) return false;
+  return isValidDomainName(host);
 }
 
 export function setupNyloRoutes(app: express.Express, storage: any, options?: NyloServerOptions) {
   const allowedOrigins = options?.allowedOrigins || [];
-  const enforceHttps = options?.enforceHttps ?? (process.env.NODE_ENV === 'production');
+  const isProduction = process.env.NODE_ENV === 'production';
+  const enforceHttps = options?.enforceHttps ?? isProduction;
+
+  // Fail closed at startup: a production deployment without these is not a
+  // hardened deployment, it only looks like one.
+  if (isProduction) {
+    if (!process.env.NYLO_TOKEN_SECRET) {
+      throw new Error('[Nylo] NYLO_TOKEN_SECRET must be set in production — it signs write grants and cross-domain tokens.');
+    }
+    if (!storage?.tokenReplayStore || typeof storage.tokenReplayStore.consumeToken !== 'function') {
+      throw new Error('[Nylo] Production requires storage.tokenReplayStore with atomic consumeToken() — durable and shared across processes. The in-memory fallback is development-only.');
+    }
+    if (typeof storage?.getTenantIdForDomain !== 'function') {
+      throw new Error('[Nylo] Production requires storage.getTenantIdForDomain(domain) so tenants are resolved from server-side configuration.');
+    }
+  }
 
   if (enforceHttps) {
-    app.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
-      if (!req.secure && req.headers['x-forwarded-proto'] !== 'https') {
-        return res.redirect(301, 'https://' + req.headers.host + req.url);
-      }
-      next();
-    });
+    const canonicalHost = String(options?.canonicalHost || process.env.NYLO_CANONICAL_HOST || '').trim().toLowerCase();
+    const trustProxyConfigured = Boolean(app.get('trust proxy'));
+    if (!canonicalHost || !isValidCanonicalHost(canonicalHost)) {
+      const msg = '[Nylo] enforceHttps requires a valid canonicalHost option (or NYLO_CANONICAL_HOST) — redirect targets are never derived from the client-controlled Host header.';
+      if (isProduction) throw new Error(msg);
+      console.warn(msg + ' HTTPS redirect disabled (development).');
+    } else if (!trustProxyConfigured) {
+      // Without a trust-proxy setting, req.secure ignores X-Forwarded-Proto,
+      // so behind any TLS-terminating proxy every request would look
+      // insecure and loop forever. Skip rather than trust raw headers.
+      console.warn('[Nylo] enforceHttps: Express "trust proxy" is not configured — HTTP→HTTPS redirect middleware disabled to avoid redirect loops. Call app.set("trust proxy", 1) (or redirect at the load balancer).');
+    } else {
+      app.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
+        // req.secure honors "trust proxy": X-Forwarded-Proto is only
+        // believed when it comes from a configured trusted hop.
+        if (req.secure) return next();
+        return res.redirect(301, 'https://' + canonicalHost + req.url);
+      });
+    }
   }
 
   app.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -41,7 +85,9 @@ export function setupNyloRoutes(app: express.Express, storage: any, options?: Ny
     res.header('Referrer-Policy', 'strict-origin-when-cross-origin');
     res.header('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
     res.header('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; font-src 'self'");
-    if (req.secure || req.headers['x-forwarded-proto'] === 'https') {
+    // req.secure honors "trust proxy" — raw X-Forwarded-Proto is never
+    // trusted here (any client can send that header).
+    if (req.secure) {
       res.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
     }
     next();
@@ -51,7 +97,6 @@ export function setupNyloRoutes(app: express.Express, storage: any, options?: Ny
   // matching; no arbitrary-origin reflection. Fail-closed: when no
   // allowlist is configured, production denies all cross-origin requests
   // and development only allows loopback origins.
-  const isProduction = process.env.NODE_ENV === 'production';
   if (allowedOrigins.length === 0) {
     if (isProduction) {
       console.error('[Nylo] SECURITY: No allowedOrigins configured — all cross-origin requests will be rejected. Set allowedOrigins.');
@@ -67,10 +112,12 @@ export function setupNyloRoutes(app: express.Express, storage: any, options?: Ny
       res.header('Access-Control-Allow-Origin', origin);
       res.header('Access-Control-Allow-Credentials', 'true');
       res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+      // Browser-facing surface only: identity/tenant headers (X-Customer-ID,
+      // X-WaiTag, X-Session-ID) are gone — tenant identity travels inside
+      // the signed write grant. API keys are server-to-server and are not
+      // accepted from browsers.
       res.header('Access-Control-Allow-Headers',
-        'Origin, X-Requested-With, Content-Type, Accept, X-API-Key, X-Customer-ID, X-Session-ID, X-WaiTag, X-Batch-Size, X-SDK-Version');
-      res.header('Access-Control-Expose-Headers',
-        'X-WaiTag, X-Cross-Domain-WaiTag, X-Session-ID');
+        'Origin, X-Requested-With, Content-Type, Accept, X-Nylo-Grant, X-Batch-Size, X-SDK-Version');
       res.header('Access-Control-Max-Age', '86400');
     }
     if (req.method === 'OPTIONS') return res.status(204).send();
@@ -101,6 +148,7 @@ export function setupNyloRoutes(app: express.Express, storage: any, options?: Ny
     next();
   });
 
+  registerGrantRoutes(app, storage);
   registerTrackingRoutes(app, storage);
   registerWaiTagTrackingRoutes(app, storage);
   registerDnsVerificationRoutes(app, storage);
@@ -108,6 +156,7 @@ export function setupNyloRoutes(app: express.Express, storage: any, options?: Ny
 
 export { registerTrackingRoutes } from './api/tracking';
 export { registerWaiTagTrackingRoutes, TokenReplayStore } from './api/waitag-tracking';
+export { registerGrantRoutes, requireWriteGrant } from './api/grant';
 export { registerDnsVerificationRoutes } from './api/dns-verify';
 export { generateWaiTagId, generateSessionId, generateApiKey } from './utils/secure-id';
 export {

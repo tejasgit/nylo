@@ -20,6 +20,7 @@
 
 import dns from 'dns';
 import crypto from 'crypto';
+import { parentDomainOf } from './security-core';
 
 const TXT_RECORD_PREFIX = 'nylo-verify=';
 
@@ -112,8 +113,11 @@ export async function checkSubdomainOwnership(
   };
 }
 
+/**
+ * Public-suffix-aware parent lookup. Returns one label up, or null when the
+ * domain is already a registrable domain (never climbs into public suffixes,
+ * so `example.co.uk` has no parent — `co.uk` is not ownable).
+ */
 export function extractParentDomain(domain: string): string | null {
-  const parts = domain.split('.');
-  if (parts.length <= 2) return null;
-  return parts.slice(1).join('.');
+  return parentDomainOf(domain);
 }

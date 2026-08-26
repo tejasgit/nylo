@@ -3,6 +3,11 @@
  *
  * Nylo Tracking API — Batch Event Ingestion
  *
+ * Write authorization: every batch must carry a server-signed write grant
+ * (see server/api/grant.ts). The tenant an event is stored under comes from
+ * the grant — caller-supplied customer IDs are never trusted, and any
+ * conflicting ID in the payload is rejected loudly.
+ *
  * Copyright (c) 2024-2026 Nylo Contributors
  * Licensed under MIT License (see LICENSE)
  */
@@ -12,9 +17,15 @@ import crypto from "crypto";
 import {
   validateDomain,
   validateEventType,
-  sanitizeFormData
+  validateSessionId,
+  validateClientTimestamp,
+  sanitizeFormData,
+  sanitizeUrlForStorage,
+  stripFingerprintFields
 } from '../utils/input-validation';
+import { splitRegistrableDomain } from '../utils/security-core';
 import { parseEnvelope } from '../../shared/event-envelope';
+import { requireWriteGrant } from './grant';
 
 const dedupCache = new Map<string, number>();
 const DEDUP_WINDOW_MS = parseInt(process.env.TRACKING_DEDUP_WINDOW_SECONDS || '60', 10) * 1000;
@@ -34,44 +45,71 @@ export interface TrackingStorage {
   createInteraction(data: any): Promise<any>;
 }
 
-function validateAndSanitizeEvent(eventItem: any): any | null {
-  const sanitized = sanitizeFormData(eventItem);
+/**
+ * Strict per-event validation: invalid events are rejected with a specific
+ * reason, never silently "fixed" (the old code laundered unknown event types
+ * into 'custom' and dropped invalid domains to null).
+ */
+function validateAndSanitizeEvent(eventItem: any): { ok: true; event: any } | { ok: false; reason: string } {
+  const sanitized = stripFingerprintFields(sanitizeFormData(eventItem));
 
-  let eventType = sanitized.eventType || sanitized.interactionType;
-  if (!eventType || typeof eventType !== 'string') return null;
-
+  const rawType = sanitized.eventType || sanitized.interactionType;
+  if (!rawType || typeof rawType !== 'string') return { ok: false, reason: 'missing_event_type' };
+  let eventType: string;
   try {
-    eventType = validateEventType(eventType);
+    eventType = validateEventType(rawType);
   } catch {
-    eventType = 'custom';
+    return { ok: false, reason: 'invalid_event_type' };
   }
 
-  let domain = sanitized.domain;
-  if (!domain || typeof domain !== 'string') return null;
-
+  const rawDomain = sanitized.domain;
+  if (!rawDomain || typeof rawDomain !== 'string') return { ok: false, reason: 'missing_domain' };
+  let domain: string;
   try {
-    domain = validateDomain(domain);
+    domain = validateDomain(rawDomain);
   } catch {
-    return null;
+    return { ok: false, reason: 'invalid_domain' };
   }
 
-  const sessionId = sanitized.sessionId;
-  if (!sessionId || typeof sessionId !== 'string') return null;
+  if (!sanitized.sessionId || typeof sanitized.sessionId !== 'string') {
+    return { ok: false, reason: 'missing_session_id' };
+  }
+  let sessionId: string;
+  try {
+    sessionId = validateSessionId(sanitized.sessionId);
+  } catch {
+    return { ok: false, reason: 'invalid_session_id' };
+  }
+
+  let clientTimestamp: string | null = null;
+  if (sanitized.timestamp !== undefined && sanitized.timestamp !== null && sanitized.timestamp !== '') {
+    try {
+      clientTimestamp = validateClientTimestamp(sanitized.timestamp);
+    } catch {
+      return { ok: false, reason: 'invalid_timestamp' };
+    }
+  }
 
   return {
-    eventType,
-    domain,
-    sessionId,
-    url: sanitized.url || sanitized.pageUrl || '',
-    userId: sanitized.userId || null,
-    metadata: sanitized.metadata || '',
-    timestamp: sanitized.timestamp,
-    rest: Object.keys(sanitized).reduce((acc: any, key: string) => {
-      if (!['eventType', 'interactionType', 'domain', 'sessionId', 'url', 'pageUrl', 'userId', 'metadata', 'timestamp'].includes(key)) {
-        acc[key] = sanitized[key];
-      }
-      return acc;
-    }, {})
+    ok: true,
+    event: {
+      eventType,
+      domain,
+      sessionId,
+      // Query strings and fragments are never stored (tokens, emails, search
+      // terms). Origin + path only.
+      url: sanitizeUrlForStorage(sanitized.url || sanitized.pageUrl),
+      userId: typeof sanitized.userId === 'string' ? sanitized.userId.substring(0, 128) : null,
+      metadata: sanitized.metadata || '',
+      timestamp: clientTimestamp,
+      customerId: sanitized.customerId,
+      rest: Object.keys(sanitized).reduce((acc: any, key: string) => {
+        if (!['eventType', 'interactionType', 'domain', 'sessionId', 'url', 'pageUrl', 'userId', 'metadata', 'timestamp', 'customerId'].includes(key)) {
+          acc[key] = sanitized[key];
+        }
+        return acc;
+      }, {})
+    }
   };
 }
 
@@ -79,6 +117,13 @@ export function registerTrackingRoutes(app: any, storage: TrackingStorage) {
   // CORS (including OPTIONS preflight) is handled centrally in server/index.ts.
   app.post("/api/track", async (req: Request, res: Response) => {
     try {
+      const auth = requireWriteGrant(req, 'ingest');
+      if (auth.ok !== true) {
+        const failure = auth as { status: number; error: string; message: string };
+        return res.status(failure.status).json({ success: false, error: failure.error, message: failure.message });
+      }
+      const grant = auth.grant;
+
       const parsed = parseEnvelope(req.body);
       if (parsed.ok !== true) {
         // Explicit cast: keeps narrowing robust even when compiled without strict mode.
@@ -99,18 +144,34 @@ export function registerTrackingRoutes(app: any, storage: TrackingStorage) {
         const eventId: string | null = typeof eventItem.eventId === 'string' ? eventItem.eventId : null;
 
         const validated = validateAndSanitizeEvent(eventItem);
-        if (!validated) {
-          results.push({ index: i, eventId, status: 'rejected', reason: 'validation_failed' });
+        if (validated.ok !== true) {
+          const failure = validated as { reason: string };
+          results.push({ index: i, eventId, status: 'rejected', reason: failure.reason });
+          continue;
+        }
+        const event = validated.event;
+
+        // Domain binding: the grant only authorizes writes for the page
+        // domain it was issued to.
+        if (event.domain !== grant.domain) {
+          results.push({ index: i, eventId, status: 'rejected', reason: 'domain_mismatch' });
+          continue;
+        }
+        // Tenant binding: the tenant comes from the grant. A conflicting
+        // caller-supplied customerId is an error, not a suggestion.
+        if (event.customerId !== undefined && event.customerId !== null && String(event.customerId) !== String(grant.tenantId)) {
+          results.push({ index: i, eventId, status: 'rejected', reason: 'tenant_mismatch' });
           continue;
         }
 
-        // Idempotent dedup: prefer the client-generated cryptographic eventId,
-        // fall back to a content hash for legacy (schemaVersion 0) events.
-        const eventTimestampStr = validated.timestamp ? String(validated.timestamp) : '';
+        // Idempotent dedup, scoped per tenant: prefer the client-generated
+        // cryptographic eventId, fall back to a content hash for legacy
+        // (schemaVersion 0) events.
+        const eventTimestampStr = event.timestamp ? String(event.timestamp) : '';
         const dedupKey = eventId
-          ? `id:${eventId}`
+          ? `id:${grant.tenantId}:${eventId}`
           : crypto.createHash('sha256')
-              .update(`${validated.sessionId}:${validated.eventType}:${eventTimestampStr}`)
+              .update(`${grant.tenantId}:${event.sessionId}:${event.eventType}:${eventTimestampStr}`)
               .digest('hex');
 
         const expireAt = dedupCache.get(dedupKey);
@@ -119,25 +180,27 @@ export function registerTrackingRoutes(app: any, storage: TrackingStorage) {
           continue;
         }
 
+        const split = splitRegistrableDomain(event.domain);
+
         try {
           await storage.createInteraction({
-            sessionId: validated.sessionId,
-            userId: validated.userId,
+            sessionId: event.sessionId,
+            userId: event.userId,
             timestamp: receivedAt,
-            pageUrl: validated.url,
-            domain: validated.domain,
-            interactionType: validated.eventType,
-            content: validated.metadata,
-            mainDomain: validated.domain.split('.').length > 2 ? validated.domain.split('.').slice(1).join('.') : validated.domain,
-            subdomain: validated.domain.split('.').length > 2 ? validated.domain.split('.')[0] : null,
-            customerId: req.headers['x-customer-id'],
-            featureName: validated.eventType,
+            pageUrl: event.url,
+            domain: event.domain,
+            interactionType: event.eventType,
+            content: event.metadata,
+            mainDomain: split.registrableDomain || event.domain,
+            subdomain: split.subdomain,
+            customerId: grant.tenantId,
+            featureName: event.eventType,
             featureCategory: 'tracking',
             context: {
-              metadata: validated.metadata,
-              ...validated.rest,
+              metadata: event.metadata,
+              ...event.rest,
               eventId,
-              clientTimestamp: validated.timestamp || null,
+              clientTimestamp: event.timestamp,
               serverReceivedAt: receivedAt.toISOString()
             }
           });
@@ -147,7 +210,7 @@ export function registerTrackingRoutes(app: any, storage: TrackingStorage) {
           processedCount++;
           results.push({ index: i, eventId, status: 'stored' });
         } catch (error) {
-          console.error('Failed to store event:', validated.eventType);
+          console.error('Failed to store event:', event.eventType);
           results.push({ index: i, eventId, status: 'error', reason: 'storage_failed' });
         }
       }

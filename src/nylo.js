@@ -75,6 +75,13 @@
   var plainFeatures = script?.getAttribute('data-features') || null;
   var encryptedSecurity = script?.getAttribute('data-security') || null;
   var apiEndpoint = script?.getAttribute('data-api') || null;
+  // Optional allowlist of query parameters (e.g. utm_source) the integrator
+  // wants collected. Everything else in the query string never leaves the
+  // browser — see sanitizeUrlForTransport().
+  var allowedQueryParams = (script?.getAttribute('data-allowed-params') || '')
+    .split(',')
+    .map(function(s) { return s.trim(); })
+    .filter(Boolean);
 
   var TrackingFeatures = {
     trackPageViews: false,
@@ -124,6 +131,10 @@
     },
 
     generateCSRFToken: function() {
+      if (typeof crypto === 'undefined' || !crypto || !crypto.getRandomValues) {
+        Logger.error('crypto.getRandomValues not available — cannot generate secure ID');
+        return null;
+      }
       return Array.from(crypto.getRandomValues(new Uint8Array(16)))
         .map(function(b) { return b.toString(16).padStart(2, '0'); }).join('');
     },
@@ -186,6 +197,14 @@
 
     _hmacKeyPromise: null,
 
+    /**
+     * Storage-integrity HMAC — TAMPER-EVIDENCE, NOT AUTHENTICATION. The key
+     * is derived from the public customer ID, so anyone who reads this file
+     * can compute valid MACs. It catches accidental corruption and naive
+     * cross-context injection into cookies/storage; it cannot stop a
+     * deliberate attacker, and the server must never treat client-side
+     * storage (or this MAC) as trusted input.
+     */
     getHMACKey: function() {
       if (this._hmacKeyPromise) return this._hmacKeyPromise;
       var keyData = new TextEncoder().encode('nylo_integrity:' + customerId);
@@ -284,12 +303,18 @@
   };
 
   var ENVELOPE_SCHEMA_VERSION = 1;
+  // Shared with shared/event-envelope.js — fields hoisted into the batch
+  // envelope's `common` block when identical across events. Note: customerId
+  // is part of the wire contract for legacy payloads, but this SDK no longer
+  // emits it — tenant identity travels only inside the server-signed write
+  // grant, never as a caller-asserted field.
+  var ENVELOPE_COMMON_FIELDS = ['sessionId', 'userId', 'waiTag', 'domain', 'customerId'];
   var Compression = {
     compress: function(data) {
       var first = data[0] || {};
       var common = {};
       ENVELOPE_COMMON_FIELDS.forEach(function(field) {
-        var value = field === 'customerId' ? customerId : first[field];
+        var value = first[field];
         if (value !== undefined && value !== null) common[field] = value;
       });
 
@@ -418,29 +443,36 @@
           }
         }
 
-        return this.verifyAndProcessToken(crossDomainToken);
+        return this.verifyAndProcessToken(crossDomainToken, isCancelled);
       }
 
       return Promise.resolve(false);
     },
 
-    verifyAndProcessToken: function(token) {
+    verifyAndProcessToken: function(token, isCancelled) {
+      isCancelled = isCancelled || function() { return false; };
       var self = this;
       var domain = window.location.hostname;
       var verificationStartTime = performance.now();
       state.performanceMetrics.timings.tokenVerificationStartMs = verificationStartTime;
 
-      return fetch(getApiUrl() + '/api/tracking/verify-cross-domain-token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({
-          token: token,
-          domain: domain,
-          customerId: customerId,
-          referrer: document.referrer
+      // Verification requires a write grant: the server must not let an
+      // unauthenticated caller consume (and thereby void) someone's token.
+      // The body carries only the token and this page's domain — tenant
+      // identity comes from the grant, and the referrer is not sent.
+      return WriteGrant.get().then(function(grant) {
+        if (isCancelled()) return false;
+        var headers = { 'Content-Type': 'application/json' };
+        if (grant) headers['X-Nylo-Grant'] = grant;
+        return trackedFetch(getApiUrl() + '/api/tracking/verify-cross-domain-token', {
+          method: 'POST',
+          headers: headers,
+          credentials: 'include',
+          body: JSON.stringify({
+            token: token,
+            domain: domain
+          })
         })
-      })
       .then(function(response) {
         if (!response.ok) throw new Error('Verification failed');
         return response.json();
@@ -500,6 +532,7 @@
         Logger.error('Cross-domain token verification failed:', error);
         return false;
       });
+      });
     },
 
     generateNewIdentity: function(isCancelled) {
@@ -513,10 +546,14 @@
       state.waiTag = Security.generateWaiTag(domain);
 
       if (!state.sessionId || !state.waiTag) {
-        Logger.error('Failed to generate secure identity — crypto API unavailable');
-        state.sessionId = state.sessionId || 'anon_' + Date.now().toString(36);
+        // Fail closed: without Web Crypto there are no unpredictable
+        // identifiers. A timestamp-derived fallback would be a guessable
+        // identity, so no identity is created and tracking does not start.
+        Logger.error('Secure randomness unavailable - tracking disabled (no predictable fallback identity)');
+        state.sessionId = null;
         state.waiTag = null;
-        return Promise.resolve();
+        state.trackingStarted = false;
+        return Promise.reject({ nyloAborted: 'crypto_unavailable' });
       }
 
       return Security.generateIntegrityHMAC(state.sessionId, domain, state.waiTag)
@@ -568,8 +605,8 @@
       }
 
       try {
-        var encryptedData = this.encryptIdentityData(identityData);
-        localStorage.setItem('nylo_cross_domain_identity', encryptedData);
+        var encodedData = this.encodeIdentityForStorage(identityData);
+        localStorage.setItem('nylo_cross_domain_identity', encodedData);
       } catch (e) {
         Logger.debug('localStorage not available');
       }
@@ -594,10 +631,10 @@
       } catch (e) {}
 
       try {
-        var encryptedData = localStorage.getItem('nylo_cross_domain_identity');
-        if (encryptedData) {
-          var decrypted = this.decryptIdentityData(encryptedData);
-          if (decrypted) candidates.push({ source: 'localStorage', data: decrypted });
+        var storedData = localStorage.getItem('nylo_cross_domain_identity');
+        if (storedData) {
+          var decoded = this.decodeIdentityFromStorage(storedData);
+          if (decoded) candidates.push({ source: 'localStorage', data: decoded });
         }
       } catch (e) {}
 
@@ -676,39 +713,55 @@
 
     registerIdentityWithServer: function(identityData) {
       if (state.consent !== 'granted') return; // never register after withdrawal
-      fetch(getApiUrl() + '/api/tracking/register-waitag', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({
-          waiTag: identityData.waiTag,
-          sessionId: identityData.sessionId,
-          domain: identityData.domain,
-          customerId: customerId,
-          timestamp: identityData.createdAt,
-          userAgent: navigator.userAgent
-        })
+      // Registration carries only the pseudonymous identifier and its
+      // domain binding. No customer ID (tenant comes from the grant), no
+      // user agent, and no other browser telemetry.
+      WriteGrant.get().then(function(grant) {
+        if (state.consent !== 'granted') return;
+        if (!grant) {
+          Logger.debug('No write grant - skipping identity registration');
+          return;
+        }
+        return trackedFetch(getApiUrl() + '/api/tracking/register-waitag', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Nylo-Grant': grant },
+          credentials: 'include',
+          body: JSON.stringify({
+            waiTag: identityData.waiTag,
+            sessionId: identityData.sessionId,
+            domain: identityData.domain,
+            timestamp: identityData.createdAt
+          })
+        });
       }).catch(function() {});
     },
 
-    encryptIdentityData: function(data) {
+    /**
+     * NOT ENCRYPTION. This is reversible base64 encoding with a trailer
+     * check — anyone with devtools can decode it. Its only purpose is to
+     * detect accidental corruption and keep casual eyes off the payload;
+     * confidentiality is provided by the browser's storage isolation, not
+     * by this encoding. (Renamed from "encryptIdentityData", which
+     * overstated what it does.)
+     */
+    encodeIdentityForStorage: function(data) {
       var jsonStr = JSON.stringify(data);
       var timestamp = Date.now().toString(36);
-      var salt = customerId + timestamp;
-      var encoded = btoa(jsonStr + salt);
+      var trailer = customerId + timestamp;
+      var encoded = btoa(jsonStr + trailer);
       return encoded + '.' + timestamp;
     },
 
-    decryptIdentityData: function(encryptedStr) {
+    decodeIdentityFromStorage: function(encodedStr) {
       try {
-        var parts = encryptedStr.split('.');
+        var parts = encodedStr.split('.');
         if (parts.length !== 2) return null;
         var encoded = parts[0];
         var timestamp = parts[1];
-        var salt = customerId + timestamp;
+        var trailer = customerId + timestamp;
         var decoded = atob(encoded);
-        if (!decoded.endsWith(salt)) return null;
-        var jsonStr = decoded.substring(0, decoded.length - salt.length);
+        if (!decoded.endsWith(trailer)) return null;
+        var jsonStr = decoded.substring(0, decoded.length - trailer.length);
         return JSON.parse(jsonStr);
       } catch (e) {
         return null;
@@ -870,6 +923,201 @@
     return window.location.origin;
   }
 
+  // ---- Outbound request infrastructure ---------------------------------
+
+  var inflightControllers = [];
+
+  /**
+   * Every network request the SDK makes goes through trackedFetch, which
+   * registers an AbortController for it. Consent withdrawal must stop
+   * requests that are already on the wire — not merely prevent new ones —
+   * so abortInflightRequests() is called from stopTracking().
+   */
+  function trackedFetch(url, options) {
+    options = options || {};
+    var controller = null;
+    if (typeof AbortController !== 'undefined') {
+      controller = new AbortController();
+      options.signal = controller.signal;
+      inflightControllers.push(controller);
+    }
+    function settle() {
+      if (!controller) return;
+      var idx = inflightControllers.indexOf(controller);
+      if (idx !== -1) inflightControllers.splice(idx, 1);
+    }
+    var request;
+    try {
+      request = fetch(url, options);
+    } catch (e) {
+      settle();
+      return Promise.reject(e);
+    }
+    return request.then(
+      function(response) { settle(); return response; },
+      function(error) { settle(); throw error; }
+    );
+  }
+
+  function abortInflightRequests() {
+    var controllers = inflightControllers.splice(0, inflightControllers.length);
+    controllers.forEach(function(controller) {
+      try { controller.abort(); } catch (e) {}
+    });
+  }
+
+  /**
+   * Reduces a URL to origin + path before it leaves the browser. Query
+   * strings and fragments routinely carry tokens, emails and search terms,
+   * so they are stripped structurally (never pattern-filtered). Integrators
+   * who need specific campaign parameters allowlist them via
+   * data-allowed-params; those are collected individually, never as the raw
+   * query string.
+   */
+  function sanitizeUrlForTransport(rawUrl) {
+    if (!rawUrl) return '';
+    try {
+      var parsed = new URL(rawUrl);
+      if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return '';
+      return parsed.origin + parsed.pathname;
+    } catch (e) {
+      return '';
+    }
+  }
+
+  function collectAllowedQueryParams(rawUrl) {
+    if (!allowedQueryParams.length || !rawUrl) return null;
+    try {
+      var parsed = new URL(rawUrl);
+      var collected = null;
+      allowedQueryParams.forEach(function(name) {
+        var value = parsed.searchParams.get(name);
+        if (value !== null) {
+          collected = collected || {};
+          collected[name] = String(value).substring(0, 200);
+        }
+      });
+      return collected;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // Custom-event metadata is developer-supplied, so it gets the same
+  // structural minimization as SDK-built fields BEFORE serialization:
+  // fingerprint-capable keys are dropped (semantic matching — aliases and
+  // separator variants included) and URL string values are reduced to
+  // origin + path. The server strips again as defense in depth, but the
+  // browser must never send these in the first place.
+  var FORBIDDEN_METADATA_EXACT = [
+    'ua', 'dnt', 'language', 'languages', 'locale', 'platform', 'fonts',
+    'plugins', 'mimetypes', 'battery', 'downlink', 'capabilities',
+    'clickx', 'clicky', 'pagex', 'pagey', 'screenx', 'screeny',
+    'clientx', 'clienty', 'offsetx', 'offsety', 'mousex', 'mousey',
+    'cursorx', 'cursory', 'touchx', 'touchy', 'coordx', 'coordy',
+    'xcoord', 'ycoord'
+  ];
+  var FORBIDDEN_METADATA_STEMS = [
+    'useragent', 'uastring', 'fingerprint', 'timezone', 'viewport',
+    'colordepth', 'pixeldepth', 'pixelratio', 'devicepixel',
+    'hardwareconcurrency', 'devicememory', 'maxtouchpoints', 'touchsupport',
+    'oscpu', 'cpuclass', 'mimetype', 'webgl', 'capabilit',
+    'screenwidth', 'screenheight', 'screensize', 'screenres', 'screendepth',
+    'availwidth', 'availheight', 'connectiontype', 'cookiesenabled',
+    'donottrack'
+  ];
+
+  function isForbiddenMetadataKey(key) {
+    var norm = String(key).toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (!norm) return false;
+    if (FORBIDDEN_METADATA_EXACT.indexOf(norm) !== -1) return true;
+    for (var i = 0; i < FORBIDDEN_METADATA_STEMS.length; i++) {
+      if (norm.indexOf(FORBIDDEN_METADATA_STEMS[i]) !== -1) return true;
+    }
+    return false;
+  }
+
+  function sanitizeMetadataForTransport(value, depth) {
+    depth = depth || 0;
+    if (depth > 6 || value === null || value === undefined) return value;
+    if (typeof value === 'string') {
+      if (/^https?:\/\//i.test(value.trim())) return sanitizeUrlForTransport(value);
+      return value;
+    }
+    if (Object.prototype.toString.call(value) === '[object Array]') {
+      var arr = [];
+      for (var i = 0; i < value.length; i++) {
+        arr.push(sanitizeMetadataForTransport(value[i], depth + 1));
+      }
+      return arr;
+    }
+    if (typeof value === 'object') {
+      var out = {};
+      for (var key in value) {
+        if (!Object.prototype.hasOwnProperty.call(value, key)) continue;
+        if (isForbiddenMetadataKey(key)) continue;
+        out[key] = sanitizeMetadataForTransport(value[key], depth + 1);
+      }
+      return out;
+    }
+    return value;
+  }
+
+  /**
+   * Server-signed write grant. Before any data write, the SDK asks the
+   * server for a short-lived grant for THIS page's domain; the server
+   * resolves which tenant that domain belongs to from its own
+   * configuration. The SDK never asserts tenant identity (no customer IDs
+   * in bodies or headers), and every ingestion request carries the grant
+   * in the X-Nylo-Grant header.
+   */
+  var WriteGrant = {
+    value: null,
+    expiresAtMs: 0,
+    pending: null,
+
+    get: function() {
+      if (state.consent !== 'granted') return Promise.resolve(null);
+      if (this.value && Date.now() < this.expiresAtMs - 30000) {
+        return Promise.resolve(this.value);
+      }
+      if (this.pending) return this.pending;
+      var self = this;
+      this.pending = trackedFetch(getApiUrl() + '/api/tracking/grant', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ domain: window.location.hostname })
+      })
+        .then(function(response) {
+          if (!response.ok) throw new Error('grant request failed: HTTP ' + response.status);
+          return response.json();
+        })
+        .then(function(result) {
+          self.pending = null;
+          if (result && result.success && result.grant) {
+            self.value = result.grant;
+            var parsedExpiry = result.expiresAt ? Date.parse(result.expiresAt) : NaN;
+            self.expiresAtMs = isNaN(parsedExpiry) ? Date.now() + 5 * 60 * 1000 : parsedExpiry;
+            return self.value;
+          }
+          return null;
+        })
+        .catch(function(error) {
+          self.pending = null;
+          Logger.debug('Write grant unavailable:', error && error.message);
+          return null;
+        });
+      return this.pending;
+    },
+
+    invalidate: function() {
+      this.value = null;
+      this.expiresAtMs = 0;
+      this.pending = null;
+    }
+  };
+
   function createEvent(eventType, metadata) {
     metadata = metadata || {};
     Performance.mark('create-event-start');
@@ -911,44 +1159,42 @@
     }
 
     var domain = window.location.hostname;
-    var mainDomain = domain;
-    var subdomain = null;
 
-    var domainParts = domain.split('.');
-    if (domainParts.length > 2) {
-      subdomain = domainParts[0];
-      mainDomain = domainParts.slice(1).join('.');
-    }
+    // Event IDs must be unpredictable (they drive server-side dedup). If
+    // secure randomness is unavailable the event is dropped — never given
+    // a guessable ID.
+    var eventId = Security.generateCSRFToken();
+    if (!eventId) return null;
 
+    // Data minimization is structural, not a filter: the event object is
+    // built without fingerprint-capable fields. No user agent, language,
+    // timezone, screen/viewport geometry, or browser capabilities — those
+    // combine into a device fingerprint that would undermine the
+    // consent-based identity model. Domain splitting (registrable domain vs
+    // subdomain) is the server's job, using a real public-suffix list.
     var event = {
-      eventId: Security.generateCSRFToken(),
+      eventId: eventId,
       sessionId: state.sessionId,
       waiTag: state.waiTag,
       userId: state.userId,
-      customerId: customerId,
       embedId: embedId,
       timestamp: new Date().toISOString(),
       eventType: eventType,
       domain: domain,
-      mainDomain: mainDomain,
-      subdomain: subdomain,
-      url: window.location.href,
+      url: sanitizeUrlForTransport(window.location.href),
       path: window.location.pathname,
       title: document.title,
-      referrer: document.referrer,
-      viewportWidth: window.innerWidth,
-      viewportHeight: window.innerHeight,
-      screenWidth: screen.width,
-      screenHeight: screen.height,
-      language: navigator.language,
-      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      metadata: Security.sanitize(JSON.stringify(metadata)),
+      referrer: sanitizeUrlForTransport(document.referrer),
+      metadata: Security.sanitize(JSON.stringify(sanitizeMetadataForTransport(metadata))),
       crossDomainContext: state.crossDomainData.identitySynced ? {
         referringDomain: state.crossDomainData.referringDomain,
         identityPreserved: true,
         syncMethod: 'token_verification'
       } : null
     };
+
+    var campaignParams = collectAllowedQueryParams(window.location.href);
+    if (campaignParams) event.campaignParams = campaignParams;
 
     Performance.measure('create-event', 'create-event-start');
     state.performanceMetrics.eventsProcessed++;
@@ -1007,8 +1253,8 @@
     error: function(error, context) {
       if (!TrackingFeatures.trackErrors) return;
       queueEvent('error', {
-        errorMessage: error.message || String(error),
-        errorStack: error.stack,
+        errorMessage: String(error.message || error).substring(0, 500),
+        errorStack: error.stack ? String(error.stack).substring(0, 1000) : undefined,
         errorContext: context || {}
       });
     }
@@ -1016,6 +1262,16 @@
 
   var retryCount = 0;
   var isCircuitBreakerOpen = false;
+  var pendingRetryTimers = new Set();
+
+  function clearPendingRetries() {
+    pendingRetryTimers.forEach(function(timerId) {
+      try { clearTimeout(timerId); } catch (e) {}
+    });
+    pendingRetryTimers.clear();
+    retryCount = 0;
+    isCircuitBreakerOpen = false;
+  }
 
   function sendBatch() {
     if (state.consent !== 'granted') return;
@@ -1026,27 +1282,21 @@
     var batch = state.eventQueue.splice(0, config.batchSize);
     var compressedBatch = Compression.compress(batch);
 
-    var requestOptions = {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Customer-ID': customerId,
-        'X-Session-ID': state.sessionId,
-        'X-WaiTag': state.waiTag,
-        'X-Batch-Size': batch.length.toString(),
-        'X-SDK-Version': config.version
-      },
-      credentials: 'include',
-      body: JSON.stringify({
-        schemaVersion: ENVELOPE_SCHEMA_VERSION,
-        batchId: Security.generateCSRFToken(),
-        sentAt: new Date().toISOString(),
-        common: compressedBatch.common,
-        events: compressedBatch.events
-      })
-    };
+    // Identity travels in the signed body/envelope only. The headers carry
+    // no session, tenant or identity values — the write grant authorizes
+    // the request and the server derives the tenant from it.
+    var body = JSON.stringify({
+      schemaVersion: ENVELOPE_SCHEMA_VERSION,
+      batchId: Security.generateCSRFToken(),
+      sentAt: new Date().toISOString(),
+      common: compressedBatch.common,
+      events: compressedBatch.events
+    });
 
     function scheduleRetry(eventsToRetry) {
+      // After withdrawal the queues were purged; a late network failure
+      // must not resurrect events into them.
+      if (state.consent !== 'granted') return;
       state.performanceMetrics.errors++;
 
       if (retryCount < config.maxRetries) {
@@ -1054,25 +1304,54 @@
         var retryDelay = Math.pow(2, retryCount) * 1000;
         retryCount++;
 
-        setTimeout(function() {
+        var timerId = setTimeout(function() {
+          pendingRetryTimers.delete(timerId);
           var retryBatch = state.retryQueue.splice(0, config.batchSize);
           if (retryBatch.length > 0) {
             state.eventQueue.unshift.apply(state.eventQueue, retryBatch);
             sendBatch();
           }
         }, retryDelay);
+        pendingRetryTimers.add(timerId);
       } else {
         isCircuitBreakerOpen = true;
-        setTimeout(function() {
+        var breakerId = setTimeout(function() {
+          pendingRetryTimers.delete(breakerId);
           isCircuitBreakerOpen = false;
           retryCount = 0;
         }, 30000);
+        pendingRetryTimers.add(breakerId);
       }
     }
 
-    fetch(getApiUrl() + '/api/track', requestOptions)
+    WriteGrant.get().then(function(grant) {
+      if (state.consent !== 'granted') return;
+      if (!grant) {
+        Logger.warn('No write grant available - batch will be retried');
+        scheduleRetry(batch);
+        return;
+      }
+
+      return trackedFetch(getApiUrl() + '/api/track', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Nylo-Grant': grant,
+          'X-Batch-Size': batch.length.toString(),
+          'X-SDK-Version': config.version
+        },
+        credentials: 'include',
+        body: body
+      })
       .then(function(response) {
-        if (!response.ok) throw new Error('HTTP ' + response.status);
+        if (!response.ok) {
+          // An expired or revoked grant must not poison every retry:
+          // drop the cached grant so the next attempt fetches a fresh one.
+          if (response.status === 401 || response.status === 403) {
+            WriteGrant.invalidate();
+          }
+          throw new Error('HTTP ' + response.status);
+        }
         return response.json();
       })
       .then(function(result) {
@@ -1112,6 +1391,7 @@
       .catch(function() {
         scheduleRetry(batch);
       });
+    });
   }
 
   function setupEventListeners() {
@@ -1119,9 +1399,9 @@
       if (!TrackingFeatures.trackClicks) return;
       var target = e.target.closest('a, button, [role="button"], input[type="submit"]');
       if (target) {
+        // No pointer coordinates: element identity is analytics, exact
+        // click positions are behavioral biometrics.
         Tracking.click(target, {
-          clickX: e.clientX,
-          clickY: e.clientY,
           timestamp: Date.now()
         });
       }
@@ -1133,7 +1413,7 @@
       if (!TrackingFeatures.trackForms) return;
       queueEvent('form_submit', {
         formId: e.target.id,
-        formAction: e.target.action,
+        formAction: sanitizeUrlForTransport(e.target.action),
         formMethod: e.target.method,
         fieldCount: e.target.elements.length
       });
@@ -1143,7 +1423,7 @@
 
     var errorHandler = function(e) {
       Tracking.error(e.error || new Error(e.message), {
-        filename: e.filename,
+        filename: sanitizeUrlForTransport(e.filename),
         lineno: e.lineno,
         colno: e.colno
       });
@@ -1236,6 +1516,12 @@
     state.listeners.clear();
     state.trackingStarted = false;
     state.trackingEpoch++; // invalidate any in-flight startup work
+
+    // Withdrawal means stop NOW: kill requests already on the wire, cancel
+    // scheduled retries, and drop the write grant so nothing can send.
+    abortInflightRequests();
+    clearPendingRetries();
+    WriteGrant.invalidate();
   }
 
   function startTracking() {
@@ -1250,7 +1536,18 @@
     var identityPromise;
 
     if (config.anonymousMode) {
-      state.sessionId = 'anon_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 10);
+      // Anonymous sessions still get cryptographically random IDs —
+      // Math.random would make "anonymous" session IDs guessable.
+      var anonId = Security.generateSecureId('anonymous');
+      if (!anonId) {
+        // Fail closed: without secure randomness there is no usable
+        // session identifier. Do not track with a degraded or null one.
+        Logger.error('Secure randomness unavailable - anonymous tracking disabled');
+        state.trackingStarted = false;
+        state.sessionId = null;
+        return Promise.resolve();
+      }
+      state.sessionId = 'anon_' + anonId;
       state.waiTag = null;
       state.userId = null;
       Logger.info('Anonymous mode - no identity tracking');
@@ -1311,6 +1608,13 @@
           // Only purge when consent is still not granted; a newer granted
           // epoch's data must never be erased by a stale cancelled startup.
           if (state.consent !== 'granted') Consent.purgeAllData();
+          return;
+        }
+        if (error && error.nyloAborted) {
+          // Deliberate fail-closed abort (e.g. secure randomness missing):
+          // no identity, no listeners, no batch timer.
+          state.trackingStarted = false;
+          Logger.error('Tracking startup aborted: ' + error.nyloAborted);
           return;
         }
         Logger.error('Tracking startup failed:', error);
@@ -1474,5 +1778,3 @@
     initialize();
   }
 })();
-
-  var ENVELOPE_COMMON_FIELDS = ['sessionId', 'userId', 'waiTag', 'domain', 'customerId'];

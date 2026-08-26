@@ -7,11 +7,28 @@
  * Licensed under MIT License (see LICENSE)
  */
 
-import { isValidDomainName } from './security-core';
+import {
+  isValidDomainName,
+  WAITAG_PATTERN,
+  stripFingerprintFields,
+  sanitizeUrlForStorage
+} from './security-core';
+
+// Fingerprint stripping, URL storage sanitization, and the WaiTag format
+// live in security-core.js (plain JS) so the demo servers share the exact
+// same implementations. Re-exported here for the TypeScript API surface.
+export { FORBIDDEN_FINGERPRINT_FIELDS, stripFingerprintFields, sanitizeUrlForStorage } from './security-core';
 
 const API_KEY_REGEX = /^[a-zA-Z0-9_-]{8,128}$/;
-const WAITAG_REGEX = /^(wai_[0-9a-zA-Z]{10,}_[a-zA-Z0-9]{1,}|[a-z]+-\d+-[a-f0-9]+)$/;
+const WAITAG_REGEX = WAITAG_PATTERN;
 const URL_REGEX = /^https?:\/\/.{1,2048}$/;
+const SESSION_ID_REGEX = /^[a-zA-Z0-9_-]{8,128}$/;
+
+// How far a client-supplied timestamp may drift from server time before we
+// reject it. Past skew covers offline queue replays; future skew covers
+// ordinary clock drift.
+const MAX_TIMESTAMP_PAST_MS = 48 * 60 * 60 * 1000;
+const MAX_TIMESTAMP_FUTURE_MS = 5 * 60 * 1000;
 
 const VALID_EVENT_TYPES = [
   'page_view', 'click', 'link_click', 'button_click', 'form_submit',
@@ -71,6 +88,35 @@ export function validateURL(url: string): string {
   return url.substring(0, 2048);
 }
 
+export function validateSessionId(sessionId: string): string {
+  if (!sessionId || typeof sessionId !== 'string') {
+    throw new Error('Session id is required');
+  }
+  const cleaned = sessionId.trim();
+  if (!SESSION_ID_REGEX.test(cleaned)) throw new Error('Invalid session id format');
+  return cleaned;
+}
+
+/**
+ * Validates a client-supplied timestamp (ISO string or epoch millis) and
+ * bounds it against server time. Rejects unparseable values and values more
+ * than 48h in the past or 5min in the future. Returns a normalized ISO string.
+ */
+export function validateClientTimestamp(value: any, now: number = Date.now()): string {
+  let millis: number;
+  if (typeof value === 'number') {
+    millis = value;
+  } else if (typeof value === 'string' && value.trim().length > 0) {
+    millis = Date.parse(value.trim());
+  } else {
+    throw new Error('Invalid timestamp');
+  }
+  if (!Number.isFinite(millis)) throw new Error('Invalid timestamp');
+  if (millis < now - MAX_TIMESTAMP_PAST_MS) throw new Error('Timestamp too far in the past');
+  if (millis > now + MAX_TIMESTAMP_FUTURE_MS) throw new Error('Timestamp too far in the future');
+  return new Date(millis).toISOString();
+}
+
 export function sanitizeFormData(data: Record<string, any>): Record<string, any> {
   const sanitized: Record<string, any> = {};
   for (const [key, value] of Object.entries(data)) {
@@ -91,25 +137,34 @@ export function sanitizeFormData(data: Record<string, any>): Record<string, any>
   return sanitized;
 }
 
+/**
+ * Strict tracking-event validation. Invalid input is REJECTED (throws), never
+ * silently coerced: an unknown eventType used to be laundered into 'custom'
+ * and an invalid domain was passed through — both hid attacks and bugs.
+ */
 export function validateTrackingEvent(payload: any): any {
   if (!payload || typeof payload !== 'object') {
     throw new Error('Invalid payload');
   }
 
-  const sanitized = sanitizeFormData(payload);
+  const sanitized = stripFingerprintFields(sanitizeFormData(payload));
 
-  if (sanitized.eventType) {
-    try {
-      sanitized.eventType = validateEventType(sanitized.eventType);
-    } catch {
-      sanitized.eventType = 'custom';
-    }
+  sanitized.eventType = validateEventType(sanitized.eventType);
+
+  if (sanitized.domain !== undefined && sanitized.domain !== null && sanitized.domain !== '') {
+    sanitized.domain = validateDomain(sanitized.domain);
   }
 
-  if (sanitized.domain) {
-    try {
-      sanitized.domain = validateDomain(sanitized.domain);
-    } catch {}
+  if (sanitized.sessionId !== undefined && sanitized.sessionId !== null && sanitized.sessionId !== '') {
+    sanitized.sessionId = validateSessionId(sanitized.sessionId);
+  }
+
+  if (sanitized.waiTag !== undefined && sanitized.waiTag !== null && sanitized.waiTag !== '') {
+    sanitized.waiTag = validateWaiTagId(sanitized.waiTag);
+  }
+
+  if (sanitized.timestamp !== undefined && sanitized.timestamp !== null && sanitized.timestamp !== '') {
+    sanitized.timestamp = validateClientTimestamp(sanitized.timestamp);
   }
 
   return sanitized;

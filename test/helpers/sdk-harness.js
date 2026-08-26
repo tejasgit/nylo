@@ -63,7 +63,9 @@ function loadSdk(opts) {
 
   // Optional gate to defer WebCrypto async work deterministically in tests:
   // pass opts.cryptoGate (a Promise); subtle operations await it first.
-  var cryptoObj = webcrypto;
+  // opts.noCrypto simulates an environment without Web Crypto so tests can
+  // prove the SDK fails closed (no predictable fallback identifiers).
+  var cryptoObj = opts.noCrypto ? undefined : webcrypto;
   if (opts.cryptoGate) {
     const gatedSubtle = {};
     for (const m of ['digest', 'importKey', 'sign', 'verify', 'encrypt', 'decrypt', 'deriveBits', 'deriveKey']) {
@@ -76,15 +78,17 @@ function loadSdk(opts) {
     };
   }
 
+  const hostname = opts.hostname || 'example.com';
+  const search = opts.search || '';
   const windowStub = {
     location: {
-      hostname: opts.hostname || 'example.com',
+      hostname: hostname,
       protocol: 'https:',
-      href: 'https://' + (opts.hostname || 'example.com') + '/',
+      href: 'https://' + hostname + '/' + search + (opts.hash || ''),
       pathname: '/',
-      search: '',
+      search: search,
       hash: opts.hash || '',
-      origin: 'https://' + (opts.hostname || 'example.com')
+      origin: 'https://' + hostname
     },
     crypto: cryptoObj,
     innerWidth: 1024,
@@ -118,6 +122,19 @@ function loadSdk(opts) {
       fetchCalls.push({ url, options });
       const handler = opts.fetchHandler;
       if (handler) return handler(url, options);
+      // Default handler understands grant issuance so the SDK's
+      // grant-gated write paths work out of the box in tests.
+      if (String(url).includes('/api/tracking/grant')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            success: true,
+            grant: 'test-grant-payload.test-signature',
+            expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+            scopes: ['ingest', 'register']
+          })
+        });
+      }
       return Promise.resolve({ ok: true, json: () => Promise.resolve({ success: true }) });
     },
     console,
@@ -129,6 +146,8 @@ function loadSdk(opts) {
     atob: (s) => Buffer.from(s, 'base64').toString('binary'),
     URLSearchParams,
     URL,
+    AbortController,
+    AbortSignal,
     TextEncoder,
     TextDecoder,
     Intl,

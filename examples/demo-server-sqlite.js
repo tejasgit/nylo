@@ -83,7 +83,11 @@ app.post('/api/tracking/register-waitag', async (req, res) => {
 });
 
 // WTX-1 token verification with replay protection (shared, see demo-token-routes.js).
-registerTokenVerification(app, { secret: NYLO_TOKEN_SECRET });
+registerTokenVerification(app, {
+  secret: NYLO_TOKEN_SECRET,
+  // Durable, atomic, restart-safe replay store backed by the same SQLite DB.
+  replayStore: storage.tokenReplayStore
+});
 
 app.get('/api/events', (req, res) => {
   const events = storage.getRecentEvents(100);

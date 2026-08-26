@@ -14,6 +14,14 @@ const express = require('express');
 
 const { createTrackHandler } = require('../examples/track-ingestion');
 const { buildEnvelope } = require('../shared/event-envelope');
+const { signWriteGrant } = require('../server/utils/write-grant');
+
+const SECRET = 'partial-fail-test-secret';
+// Ingestion is grant-authorized: the tenant comes from the signed grant.
+const GRANT = signWriteGrant(
+  { tenantId: 'cust-1', domain: 'demo.example.com', scopes: ['ingest'] },
+  SECRET
+);
 
 function makeEventId() {
   return crypto.randomBytes(16).toString('hex');
@@ -46,7 +54,7 @@ test.before(async () => {
       throw new Error('simulated transient storage failure');
     }
     stored.push(event);
-  }));
+  }, { grantSecret: SECRET }));
   await new Promise((resolve) => {
     server = app.listen(0, '127.0.0.1', resolve);
   });
@@ -58,7 +66,7 @@ test.after(() => server && server.close());
 async function postEnvelope(envelope) {
   const res = await fetch(`${base}/api/track`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'X-Nylo-Grant': GRANT },
     body: JSON.stringify(envelope)
   });
   return { status: res.status, json: await res.json() };
@@ -108,6 +116,19 @@ test('SDK sendBatch consumes per-event results: retries storage errors, drops re
   const sentBodies = [];
   const sandbox = buildSdkSandbox({
     fetch: (url, options) => {
+      // Grant issuance is transparent to this contract: answer it directly
+      // without consuming the scripted batch responses.
+      if (String(url).includes('/api/tracking/grant')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({
+            success: true,
+            grant: 'test-grant.sig',
+            expiresAt: new Date(Date.now() + 600000).toISOString()
+          })
+        });
+      }
       sentBodies.push(JSON.parse(options.body));
       const next = responses.shift();
       return Promise.resolve({
@@ -202,6 +223,8 @@ function buildSdkSandbox(overrides) {
       createElement: () => ({ textContent: '', set innerHTML(v) {}, get innerHTML() { return ''; } })
     },
     fetch: overrides.fetch,
+    AbortController,
+    AbortSignal,
     __timers: timers
   };
   sandbox.window = sandbox;

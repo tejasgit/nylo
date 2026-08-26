@@ -346,17 +346,28 @@ The verification server MUST check:
 | `INVALID_SIGNATURE` | HMAC signature verification failed |
 | `DOMAIN_NOT_AUTHORIZED` | Destination domain is not DNS-authorized |
 | `ORIGIN_MISMATCH` | Token origin does not match the requesting domain's referrer |
+| `GRANT_REQUIRED` | No write grant accompanied the verification request (401) |
+| `GRANT_DOMAIN_MISMATCH` | The write grant was issued for a different domain than requested |
+| `TENANT_MISMATCH` | The token's tenant does not match the authenticated grant tenant |
 
 ### 6.3 Verification Endpoint
+
+Verification is **authorized before it consumes**: the caller MUST present a
+valid write grant (Section 9.11) for the destination domain in the
+`X-Nylo-Grant` header. Without this, any unauthenticated party who observed a
+token in transit could "verify" it once — burning it and denying the
+legitimate destination page its identity handoff. The tenant used for token
+binding comes from the signed grant; a `customerId` field in the body is
+legacy-optional and, when present, MUST agree with the grant tenant.
 
 ```
 POST /api/tracking/verify-cross-domain-token
 Content-Type: application/json
+X-Nylo-Grant: <signed_write_grant>
 
 {
   "token": "<signed_token>",
   "domain": "destination.com",
-  "customerId": "<customer_id>",
   "referrer": "https://origin.com/page"
 }
 ```
@@ -739,6 +750,30 @@ All cross-domain tokens MUST be signed with HMAC-SHA256 using a server-side secr
 2. During verification, if both the request `domain` and the token `domain` are present, the server MUST reject tokens where they do not match (403 `DOMAIN_MISMATCH`).
 3. This prevents token reuse across unrelated domains even if the token signature is valid.
 
+**Verification access control:**
+
+1. The verification endpoint MUST require a valid write grant (Section 9.11) for the destination domain before performing any token processing.
+2. Unauthorized verification attempts MUST NOT consume the token — replay-protection state may only change after every authorization check has passed. This prevents token-burning denial of service by unauthenticated observers.
+3. The tenant used for `TENANT_MISMATCH` checks MUST come from the authenticated grant, never from caller-supplied fields.
+
+**Replay-protection storage requirements:**
+
+1. Replay consumption MUST be atomic (`consumeToken`-style check-and-set): of N concurrent verifications of the same token, exactly one may succeed.
+2. In production, the replay store MUST be durable and shared across all server processes (e.g., a database or distributed cache). In-memory stores are development-only; a production deployment without a durable store MUST refuse to start.
+
+### 9.11 Write Grants — Browser Write Authorization
+
+Browsers never assert tenant identity. All browser write paths (event
+ingestion, WaiTag registration, token verification) MUST be authorized by a
+short-lived, server-signed **write grant**:
+
+1. The page requests a grant from `POST /api/tracking/grant`, sending only the page's domain. The server resolves the tenant from **server-side configuration** (domain→tenant mapping); requests for unmapped domains MUST be rejected.
+2. When a browser `Origin` header is present, it MUST match the requested domain. In production, the `Origin` header MUST be required.
+3. Grants are HMAC-SHA256-signed structures binding `{ tenantId, domain, scopes, iat, exp, jti }`. Scopes are limited to `ingest` and `register`. The RECOMMENDED lifetime is 10 minutes; the maximum is 24 hours.
+4. Every write request carries the grant in the `X-Nylo-Grant` header. Servers MUST verify signature, expiry, scope, and domain binding, and MUST derive the tenant exclusively from the grant.
+5. Caller-supplied tenant assertions (`customerId` fields, identity headers) MUST NOT be trusted. When present for legacy compatibility, they MUST be checked for agreement with the grant and rejected on conflict (403 `TENANT_MISMATCH`) — never silently reassigned.
+6. Grants authorize **writes only**. They MUST NOT be accepted as authentication for reading, linking, or exporting identity data.
+
 ---
 
 ## 10. Privacy Considerations
@@ -1055,6 +1090,16 @@ This is a structural guarantee, not a runtime measurement. Per RFC 3986 Section 
 ---
 
 ## Changelog
+
+### v1.4.0-draft (2026-08-26)
+
+- **SECURITY FIX:** Added Section 9.11 Write Grants — browser write paths (ingestion, registration, verification) are authorized by short-lived server-signed grants; tenant identity is resolved from server-side domain→tenant configuration, never from caller-supplied customer IDs or headers
+- **SECURITY FIX:** Verification is authorized before consumption — unauthorized verification attempts can no longer burn tokens (denial-of-service fix)
+- **SECURITY FIX:** Replay consumption is atomic, and production deployments MUST use a durable shared replay store or refuse to start
+- **PRIVACY:** Fingerprint-capable telemetry (user agent, language, timezone, screen/viewport, click coordinates, and similar) removed from the SDK and stripped server-side as defense in depth; identity generation and matching never use browser/device attributes
+- **PRIVACY:** URLs are reduced to origin + path before transmission and storage; query strings and fragments are discarded unless individually allowlisted
+- Identity storage helpers renamed to reflect reality: stored identity is reversibly *encoded* (with a separate HMAC for tamper evidence), not encrypted
+- Registrable-domain handling uses public-suffix-list parsing; invalid event types, domains, session IDs, WaiTags, and out-of-window timestamps are rejected rather than normalized
 
 ### v1.3.0-draft (2026-03-18)
 

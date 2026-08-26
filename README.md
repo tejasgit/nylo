@@ -209,7 +209,11 @@ The WaiTag identifier is **pseudonymous** and satisfies four structural properti
 3. **Behavioral consistency** -- Persists across sessions via a three-layer storage hierarchy (first-party cookie `nylo_wai`, localStorage, sessionStorage). Because it persists and singles out a browser, it is personal data under GDPR-style regimes.
 4. **Unilateral deletion** -- Clearing browser storage destroys the identifier. No server coordination needed.
 
-No IP addresses are stored. User agents are hashed. All strings are sanitized and length-limited. Nylo does not reduce your consent obligations — obtain consent where the law requires it; the SDK will not track until you signal consent via `Nylo.setConsent()`.
+No IP addresses are stored. No user agents, languages, timezones, screen/viewport dimensions, or click coordinates are collected — fingerprint-capable fields are absent from the SDK's payloads and additionally stripped server-side as defense in depth. URLs are reduced to origin + path before transmission and storage; query strings and fragments (which routinely carry tokens, emails, and search terms) are discarded unless a parameter is explicitly allowlisted. All strings are sanitized and length-limited. Nylo does not reduce your consent obligations — obtain consent where the law requires it; the SDK will not track until you signal consent via `Nylo.setConsent()`.
+
+### Write Authorization
+
+Browsers never assert who they are. Tenant identity is resolved **server-side**: the SDK requests a short-lived signed **write grant** from `POST /api/tracking/grant` for the page's domain, and the server maps that domain to a tenant using its own configuration (`getTenantIdForDomain`). Every ingestion, registration, and token-verification request carries the grant in the `X-Nylo-Grant` header. Grants are domain- and scope-bound (`ingest`, `register`), expire after 10 minutes, and are signed with `NYLO_TOKEN_SECRET`. Customer IDs supplied by a browser are never trusted — a conflicting `customerId` is rejected, not reassigned.
 
 ## Domain Verification
 
@@ -261,7 +265,7 @@ The token exchange uses URL parameters (primary) or `postMessage` (iframe fallba
 
 | Attribute | Required | Description |
 |-----------|----------|-------------|
-| `data-customer-id` | Yes | Your customer/organization identifier |
+| `data-customer-id` | No | Local key for encrypted-config decryption and storage-integrity HMAC only. **Never used as tenant identity** — the server derives the tenant from signed write grants |
 | `data-api` | No | Custom API endpoint URL (defaults to script origin) |
 | `data-config` | No | AES-GCM encrypted feature configuration |
 | `data-security` | No | Encrypted domain authorization allowlist |

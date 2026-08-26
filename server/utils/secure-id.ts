@@ -9,17 +9,11 @@
 
 import crypto from 'crypto';
 
+// Fail closed: identifiers are security-relevant (they name identities and
+// sessions), so if the CSPRNG is somehow unavailable we throw instead of
+// silently degrading to predictable Math.random() values.
 export function generateSecureId(length: number = 16): string {
-  try {
-    return crypto.randomBytes(length).toString('hex');
-  } catch {
-    let result = '';
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    for (let i = 0; i < length * 2; i++) {
-      result += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    return result;
-  }
+  return crypto.randomBytes(length).toString('hex');
 }
 
 export function generateWaiTagId(): string {
@@ -32,15 +26,9 @@ export function generateWaiTagId(): string {
 function generateRandomPrefix(length: number = 8): string {
   const chars = 'abcdefghijklmnopqrstuvwxyz';
   let result = '';
-  try {
-    const bytes = crypto.randomBytes(length);
-    for (let i = 0; i < length; i++) {
-      result += chars.charAt(bytes[i] % chars.length);
-    }
-  } catch {
-    for (let i = 0; i < length; i++) {
-      result += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
+  const bytes = crypto.randomBytes(length);
+  for (let i = 0; i < length; i++) {
+    result += chars.charAt(bytes[i] % chars.length);
   }
   return result;
 }

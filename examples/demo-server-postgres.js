@@ -91,7 +91,11 @@ async function startServer() {
   });
 
   // WTX-1 token verification with replay protection (shared, see demo-token-routes.js).
-  registerTokenVerification(app, { secret: NYLO_TOKEN_SECRET });
+  registerTokenVerification(app, {
+    secret: NYLO_TOKEN_SECRET,
+    // Durable, atomic replay store shared across instances via Postgres.
+    replayStore: storage.tokenReplayStore
+  });
 
   app.get('/api/events', async (req, res) => {
     try {

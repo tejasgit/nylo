@@ -76,6 +76,11 @@ async function createPostgresStorage(connectionString) {
         UNIQUE(domain, customer_id)
       );
 
+      CREATE TABLE IF NOT EXISTS consumed_tokens (
+        token_hash TEXT PRIMARY KEY,
+        expires_at TIMESTAMPTZ NOT NULL
+      );
+
       CREATE INDEX IF NOT EXISTS idx_interactions_session ON interactions(session_id);
       CREATE INDEX IF NOT EXISTS idx_interactions_domain ON interactions(domain);
       CREATE INDEX IF NOT EXISTS idx_interactions_type ON interactions(interaction_type);
@@ -99,6 +104,22 @@ async function createPostgresStorage(connectionString) {
   }
 
   return {
+    // Durable atomic replay store for WTX-1 tokens: INSERT … ON CONFLICT DO
+    // NOTHING is atomic in Postgres, so of N concurrent consumes exactly one
+    // wins — shared across all server instances using this database.
+    tokenReplayStore: {
+      async consumeToken(tokenHash, ttlMs) {
+        await pool.query('DELETE FROM consumed_tokens WHERE expires_at < NOW()');
+        const result = await pool.query(
+          `INSERT INTO consumed_tokens (token_hash, expires_at)
+           VALUES ($1, NOW() + make_interval(secs => $2))
+           ON CONFLICT (token_hash) DO NOTHING`,
+          [tokenHash, Math.ceil((ttlMs || 300000) / 1000)]
+        );
+        return result.rowCount === 1;
+      }
+    },
+
     async createInteraction(data) {
       const query = `
         INSERT INTO interactions

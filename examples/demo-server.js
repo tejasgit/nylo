@@ -14,6 +14,12 @@ const {
   createInMemoryReplayStore,
   DEFAULT_TTL_MS
 } = require('../server/utils/token-core');
+const {
+  signWriteGrant,
+  verifyWriteGrant,
+  DEFAULT_GRANT_TTL_MS
+} = require('../server/utils/write-grant');
+const { WAITAG_PATTERN, isValidDomainName } = require('../server/utils/security-core');
 
 const app = express();
 app.use(express.json({ limit: LIMITS.MAX_BATCH_BYTES }));
@@ -32,15 +38,48 @@ const NYLO_TOKEN_SECRET = (function() {
   return ephemeral;
 })();
 
+if (process.env.NODE_ENV === 'production') {
+  console.error(
+    '[SECURITY] examples/demo-server.js is development-only: its event and ' +
+    'token-replay stores are in-memory (lost on restart, not shared across ' +
+    'instances), so token single-use cannot be guaranteed. Use the ' +
+    'production server with durable storage, or the SQLite/Postgres demos.'
+  );
+  process.exit(1);
+}
+
+// Development-only in-memory replay store (production refuses to start above).
 const replayStore = createInMemoryReplayStore();
 
+/**
+ * Server-side domain→tenant mapping — the single source of tenant identity.
+ * The demo maps loopback and the Replit dev domain to demo tenant '1'.
+ * Real deployments configure NYLO_DEMO_DOMAINS or implement a real lookup.
+ */
+const DEMO_TENANT_ID = '1';
+const grantDomains = new Set(['localhost', '127.0.0.1']);
+if (process.env.REPLIT_DEV_DOMAIN) grantDomains.add(process.env.REPLIT_DEV_DOMAIN.toLowerCase());
+(process.env.NYLO_DEMO_DOMAINS || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
+  .forEach(d => grantDomains.add(d));
+
+function getTenantIdForDomain(domain) {
+  return grantDomains.has(domain) ? DEMO_TENANT_ID : null;
+}
+
 if (ENFORCE_HTTPS) {
-  app.use((req, res, next) => {
-    if (!req.secure && req.headers['x-forwarded-proto'] !== 'https') {
-      return res.redirect(301, 'https://' + req.headers.host + req.url);
-    }
-    next();
-  });
+  // Redirect targets are never built from the client-controlled Host
+  // header. Without a configured canonical host, redirecting is unsafe —
+  // terminate TLS at the proxy instead.
+  const canonicalHost = (process.env.NYLO_CANONICAL_HOST || '').trim().toLowerCase();
+  if (canonicalHost) {
+    app.set('trust proxy', 1);
+    app.use((req, res, next) => {
+      if (req.secure) return next();
+      return res.redirect(301, 'https://' + canonicalHost + req.url);
+    });
+  } else {
+    console.warn('[SECURITY] NYLO_CANONICAL_HOST not set — HTTP→HTTPS redirect disabled (redirects must never trust the Host header). Terminate TLS at your proxy.');
+  }
 }
 
 app.use((req, res, next) => {
@@ -91,6 +130,45 @@ app.use(express.static(path.join(__dirname)));
 const interactions = [];
 const waiTags = [];
 
+/**
+ * Write-grant issuance. The browser asks for write authorization for the
+ * domain it is running on; the server resolves the tenant from its own
+ * mapping and Origin-checks the request. No customer IDs from the client.
+ */
+app.post('/api/tracking/grant', (req, res) => {
+  const rawDomain = String((req.body && req.body.domain) || '').trim().toLowerCase();
+  if (!rawDomain || (rawDomain !== 'localhost' && rawDomain !== '127.0.0.1' && !isValidDomainName(rawDomain))) {
+    return res.status(400).json({ success: false, error: 'INVALID_DOMAIN', message: 'A valid page domain is required' });
+  }
+
+  // A browser cannot forge its Origin header, so a page can only obtain
+  // grants for the domain it is actually served from.
+  const origin = req.headers.origin;
+  if (origin) {
+    let originHost = null;
+    try { originHost = new URL(String(origin)).hostname.toLowerCase(); } catch (e) { originHost = null; }
+    if (originHost !== rawDomain) {
+      return res.status(403).json({ success: false, error: 'ORIGIN_MISMATCH', message: 'Origin header does not match the requested domain' });
+    }
+  }
+
+  const tenantId = getTenantIdForDomain(rawDomain);
+  if (!tenantId) {
+    return res.status(403).json({ success: false, error: 'UNKNOWN_DOMAIN', message: 'No tenant is configured for this domain' });
+  }
+
+  const grant = signWriteGrant(
+    { tenantId, domain: rawDomain, scopes: ['ingest', 'register'] },
+    NYLO_TOKEN_SECRET
+  );
+  res.json({
+    success: true,
+    grant,
+    expiresAt: new Date(Date.now() + DEFAULT_GRANT_TTL_MS).toISOString(),
+    scopes: ['ingest', 'register']
+  });
+});
+
 app.post('/api/track', createTrackHandler((event) => {
   const interaction = {
     id: interactions.length + 1,
@@ -107,19 +185,39 @@ app.post('/api/track', createTrackHandler((event) => {
     timestamp: event.receivedAt
   };
   interactions.push(interaction);
-}));
+}, { grantSecret: () => NYLO_TOKEN_SECRET }));
 
 app.post('/api/tracking/register-waitag', (req, res) => {
-  const { waiTag, sessionId, domain, customerId } = req.body;
+  // Registration requires a write grant with the 'register' scope; the
+  // tenant is the grant's tenant and the domain must match the grant.
+  const rawGrant = req.headers['x-nylo-grant'];
+  const grantValue = Array.isArray(rawGrant) ? rawGrant[0] : rawGrant;
+  if (!grantValue) {
+    return res.status(401).json({ success: false, error: 'GRANT_REQUIRED', message: 'A write grant is required' });
+  }
+  const grantResult = verifyWriteGrant(String(grantValue), NYLO_TOKEN_SECRET, { requiredScope: 'register' });
+  if (!grantResult.valid) {
+    return res.status(403).json({ success: false, error: 'GRANT_' + (grantResult.error || 'INVALID'), message: 'Write grant rejected: ' + (grantResult.error || 'INVALID') });
+  }
+
+  const { waiTag, sessionId, domain } = req.body;
   if (!waiTag || !sessionId) {
     return res.status(400).json({ success: false, message: 'Missing required fields' });
+  }
+  // Malformed identifiers are rejected, not stored.
+  if (typeof waiTag !== 'string' || !WAITAG_PATTERN.test(waiTag)) {
+    return res.status(400).json({ success: false, error: 'INVALID_WAITAG', message: 'WaiTag format is invalid' });
+  }
+  const boundDomain = String(domain || '').trim().toLowerCase();
+  if (boundDomain && boundDomain !== grantResult.payload.domain) {
+    return res.status(403).json({ success: false, error: 'DOMAIN_MISMATCH', message: 'Domain does not match the write grant' });
   }
 
   const registration = {
     waiTag,
     sessionId,
-    domain: domain || 'localhost',
-    customerId: customerId || '1',
+    domain: grantResult.payload.domain,
+    customerId: String(grantResult.payload.tenantId),
     registeredAt: new Date().toISOString()
   };
 
@@ -134,11 +232,24 @@ app.post('/api/tracking/register-waitag', (req, res) => {
 });
 
 // WTX-1 token verification with replay protection (shared, see demo-token-routes.js).
-registerTokenVerification(app, { secret: NYLO_TOKEN_SECRET, replayStore });
+// Grant-gated: unauthenticated callers can no longer consume (burn) tokens.
+registerTokenVerification(app, { secret: NYLO_TOKEN_SECRET, replayStore, grantSecret: NYLO_TOKEN_SECRET });
 
 app.post('/api/tracking/generate-cross-domain-token', (req, res) => {
-  var apiKey = req.headers['x-api-key'];
-  if (!apiKey || apiKey !== (process.env.NYLO_API_KEY || NYLO_TOKEN_SECRET)) {
+  // Server-to-server only. Requires an explicitly configured API key —
+  // the signing secret must never double as an API key, otherwise handing
+  // out "API access" would also hand out the ability to forge tokens.
+  if (!process.env.NYLO_API_KEY) {
+    return res.status(503).json({
+      success: false,
+      error: 'NOT_CONFIGURED',
+      message: 'Token generation requires NYLO_API_KEY to be configured'
+    });
+  }
+  const apiKey = req.headers['x-api-key'];
+  const expected = Buffer.from(process.env.NYLO_API_KEY);
+  const provided = Buffer.from(String(apiKey || ''));
+  if (provided.length !== expected.length || !crypto.timingSafeEqual(provided, expected)) {
     return res.status(401).json({
       success: false,
       error: 'UNAUTHORIZED',
@@ -219,7 +330,7 @@ app.get('/api/stats', (req, res) => {
     eventTypes[event.eventType] = (eventTypes[event.eventType] || 0) + 1;
     domains[event.domain] = (domains[event.domain] || 0) + 1;
     if (event.sessionId) uniqueSessions.add(event.sessionId);
-    if (event.userId) uniqueWaiTags.add(event.userId);
+    if (event.waiTag) uniqueWaiTags.add(event.waiTag);
   }
 
   res.json({
